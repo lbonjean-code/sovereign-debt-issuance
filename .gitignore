@@ -1,0 +1,10 @@
+# R workspace artifacts
+.RData
+.Rhistory
+*.Rproj.user/
+
+# shinyapps.io deployment config (account-specific, not needed in repo)
+rsconnect/
+
+# Logs
+run_log.txt
