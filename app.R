@@ -1691,7 +1691,7 @@ chart_sa_avg_maturity <- function(avg_maturity) {
       expand = expansion(mult = c(0, 0.15))
     ) +
     labs(
-      subtitle = "Títulos de taxa fixa (anos ao fechamento do período)",
+      subtitle = "Anos ao fechamento do período fiscal",
       caption  = "Fonte: National Treasury — Budget Review 2026, Capítulo 7, Figura 7.2"
     ) +
     PLOT_THEME +
@@ -2027,7 +2027,7 @@ ui <- page_navbar(
       plotlyOutput("sa_maturity", height = "380px")
     ),
     card(
-      card_header("Prazo Médio Ponderado da Dívida — South Africa"),
+      card_header("Prazo Médio Ponderado de Títulos de Taxa Fixa"),
       plotlyOutput("sa_avg_maturity", height = "380px")
     )
   ),
