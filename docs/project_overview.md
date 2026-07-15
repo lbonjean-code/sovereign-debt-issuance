@@ -43,6 +43,10 @@ Runs from the JGP file server locally; from `data/` subfolder on shinyapps.io. C
 *Maturity profiles:*
 `mexico_maturity.csv`, `colombia_maturity.csv`, `south_africa_maturity.csv`
 
+*Weighted average maturity:*
+`mexico_avg_maturity.csv`, `south_africa_avg_maturity.csv`, `colombia_avg_maturity.csv`
+(Chile avg maturity is a static hardcoded KPI card — no CSV)
+
 ## Fiscal year logic
 
 | Country | FY definition | FY helper | Fiscal month 1 |
@@ -80,10 +84,10 @@ Other countries: `fmt_fy(fy, country)` → `as.character(fy)` e.g. `"2026"`.
 12. Country-specific tail cards (see below)
 
 **Country-specific tail cards (after debt pair):**
-- **Chile:** KPI card "Amortizações de Bônus em 2026" (static: US$ 7.211 MM, annual update)
-- **Mexico:** Holdings (Detentores de Títulos) → Maturity Profile (Deuda Interna)
-- **South Africa:** Holdings (Detentores de Títulos) → Maturity Profile (Títulos Domésticos)
-- **Colombia:** Holdings + Maturity side-by-side (col_widths = c(5, 7))
+- **Chile:** Two KPI cards side-by-side (col_widths = c(6,6)): "Amortizações de Bônus em 2026" (US$ 7.211 MM) + "Prazo Médio da Dívida" (10.4 anos) — both static, annual update
+- **Mexico:** Holdings → Maturity Profile → Avg Maturity bar chart (SG231, Dec obs from 2010)
+- **South Africa:** Holdings → Maturity Profile → Avg Maturity bar chart (Budget Review, 2013/14–2025/26)
+- **Colombia:** Holdings + Maturity side-by-side (col_widths = c(5,7)) → Avg Maturity KPI card (Vida Media from IRC PDF)
 
 **Visão Geral tab:** single card "Pré vs. Pós — Composição YTD por País" (`overview_pre_pos`)
 

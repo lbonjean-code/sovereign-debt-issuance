@@ -56,6 +56,8 @@ Shared semantic palette across all countries. Key mappings:
 | `chart_colombia_maturity(maturity)` | COP/UVR stacked bars by maturity year; deduplicates via slice_max |
 | `chart_mexico_maturity(maturity)` | Multi-instrument stacked bars by maturity year; includes Total label row |
 | `chart_sa_maturity(maturity)` | Single-color bars by SA fiscal year (2026/27→2057/58); ZAR trillones |
+| `chart_mexico_avg_maturity(avg_maturity)` | Bar chart of weighted avg maturity (anos); Dec obs 2010+, current year latest month |
+| `chart_sa_avg_maturity(avg_maturity)` | Bar chart of WAM by fiscal year (2013/14–2025/26); fixed-rate bonds only |
 | `clean_legend(plt, hide_line_total)` | Strips ggplotly legend artifacts |
 | `plotly_placeholder(msg)` | Empty plotly card with "Em breve" message |
 
