@@ -119,3 +119,30 @@ cat("Maturity profile saved to", maturity_path, "\n")
 
 write.csv(holdings, holdings_path, row.names = FALSE)
 cat("Holdings saved to", holdings_path, "\n")
+
+# Add to colombia_maturity_holdings.R after the holdings extraction
+
+# --- Extract Vida Media (Weighted Average Maturity) from page 1 ---
+page1 <- txt[[1]]
+lines1 <- strsplit(page1, "\n")[[1]]
+
+# Find "Vida Media" line in the TOTAL GENERAL section
+vida_media_line <- lines1[grepl("Vida Media", lines1)]
+
+# The TOTAL column value is the last number on the first Vida Media line
+vida_line <- vida_media_line[1]
+nums <- str_extract_all(vida_line, "[0-9]+,[0-9]+")[[1]]
+nums <- as.numeric(gsub(",", ".", nums))
+vida_media_total <- nums[length(nums)]
+
+cat("Vida Media (Total):", vida_media_total, "anos\n")
+
+# Save as single-row CSV
+vida_media_df <- data.frame(
+  Fecha_Corte = fecha_corte,
+  Vida_Media  = vida_media_total
+)
+
+vida_media_path <- "\\\\jgprjfileserver\\Compartilhadas\\Summer\\lbonjean\\fixed income\\data\\colombia_avg_maturity.csv"
+write.csv(vida_media_df, vida_media_path, row.names = FALSE)
+cat("Vida Media saved to", vida_media_path, "\n")

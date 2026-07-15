@@ -188,8 +188,11 @@ load_mexico <- function() {
 
   maturity <- read_csv(path("mexico_maturity.csv"), show_col_types = FALSE)
 
+  avg_maturity <- read_csv(path("mexico_avg_maturity.csv"), show_col_types = FALSE) |>
+    mutate(Periodo = as.Date(Periodo))
+
   list(lic = lic, tsy = tsy, gdp = gdp, debt = debt,
-       holdings = holdings, maturity = maturity)
+       holdings = holdings, maturity = maturity, avg_maturity = avg_maturity)
 }
 
 # ── South Africa ─────────────────────────────────────────────
@@ -235,7 +238,10 @@ load_sa <- function() {
 
   maturity <- read_csv(path("south_africa_maturity.csv"), show_col_types = FALSE)
 
-  list(lic = lic, tsy = tsy, gdp = gdp, debt = debt, holdings = holdings, maturity = maturity)
+  avg_maturity <- read_csv(path("south_africa_avg_maturity.csv"), show_col_types = FALSE)
+
+  list(lic = lic, tsy = tsy, gdp = gdp, debt = debt, holdings = holdings,
+       maturity = maturity, avg_maturity = avg_maturity)
 }
 
 load_colombia <- function() {
@@ -281,8 +287,10 @@ load_colombia <- function() {
 
   maturity <- read_csv(path("colombia_maturity.csv"), show_col_types = FALSE)
 
+  avg_maturity <- read_csv(path("colombia_avg_maturity.csv"), show_col_types = FALSE)
+
   list(lic = lic, tsy = tsy, gdp = gdp, debt = debt,
-       holdings = holdings_co, maturity = maturity)
+       holdings = holdings_co, maturity = maturity, avg_maturity = avg_maturity)
 }
 
 # ── Annual targets (updated manually each year) ──────────────
@@ -1602,6 +1610,43 @@ chart_mexico_maturity <- function(maturity) {
     layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
 }
 
+# ── Mexico: weighted average maturity of internal debt ────────
+chart_mexico_avg_maturity <- function(avg_maturity) {
+  if (nrow(avg_maturity) == 0) return(plotly_placeholder())
+
+  cur_yr <- year(Sys.Date())
+
+  completed <- avg_maturity |>
+    filter(year(Periodo) >= 2010, year(Periodo) < cur_yr, month(Periodo) == 12) |>
+    mutate(label = as.character(year(Periodo)))
+
+  current <- avg_maturity |>
+    filter(year(Periodo) == cur_yr) |>
+    slice_max(Periodo, n = 1) |>
+    mutate(label = paste0(cur_yr, " (", format(Periodo, "%b"), ")"))
+
+  df <- bind_rows(completed, current) |>
+    mutate(label = factor(label, levels = label))
+
+  p <- ggplot(df, aes(x = label, y = Anos,
+                      text = paste0(label, ": ", round(Anos, 1), " anos"))) +
+    geom_col(fill = "#4472C4", width = 0.7) +
+    geom_text(aes(label = round(Anos, 1)), vjust = -0.5, size = 2.8, color = "#333333") +
+    scale_y_continuous(
+      labels = label_number(suffix = " anos", accuracy = 0.1),
+      expand = expansion(mult = c(0, 0.12))
+    ) +
+    labs(
+      subtitle = "Valores Governamentais (anos ao fechamento do período)",
+      caption  = "Fonte: Banxico (SG231)"
+    ) +
+    PLOT_THEME +
+    theme(plot.caption = element_text(hjust = 0, size = 7, color = "#888888"))
+
+  ggplotly(p, tooltip = "text") |>
+    layout(margin = list(b = 60))
+}
+
 # ── South Africa: domestic government bond maturity profile ───
 chart_sa_maturity <- function(maturity) {
   if (nrow(maturity) == 0) return(plotly_placeholder())
@@ -1625,6 +1670,35 @@ chart_sa_maturity <- function(maturity) {
     labs(subtitle = "Inclui títulos de taxa fixa, indexados à inflação e FRNs") +
     PLOT_THEME +
     theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7))
+
+  ggplotly(p, tooltip = "text") |>
+    layout(margin = list(b = 80))
+}
+
+# ── South Africa: weighted average maturity of fixed-rate bonds ─
+chart_sa_avg_maturity <- function(avg_maturity) {
+  if (nrow(avg_maturity) == 0) return(plotly_placeholder())
+
+  df <- avg_maturity |>
+    mutate(Fiscal_Year = factor(Fiscal_Year, levels = Fiscal_Year))
+
+  p <- ggplot(df, aes(x = Fiscal_Year, y = WAM_Anos,
+                      text = paste0(Fiscal_Year, ": ", round(WAM_Anos, 1), " anos"))) +
+    geom_col(fill = "#4472C4", width = 0.7) +
+    geom_text(aes(label = round(WAM_Anos, 1)), vjust = -0.5, size = 2.8, color = "#333333") +
+    scale_y_continuous(
+      labels = label_number(suffix = " anos", accuracy = 0.1),
+      expand = expansion(mult = c(0, 0.15))
+    ) +
+    labs(
+      subtitle = "Títulos de taxa fixa (anos ao fechamento do período)",
+      caption  = "Fonte: National Treasury — Budget Review 2026, Capítulo 7, Figura 7.2"
+    ) +
+    PLOT_THEME +
+    theme(
+      axis.text.x  = element_text(angle = 45, hjust = 1),
+      plot.caption = element_text(hjust = 0, size = 7, color = "#888888")
+    )
 
   ggplotly(p, tooltip = "text") |>
     layout(margin = list(b = 80))
@@ -1794,13 +1868,26 @@ ui <- page_navbar(
       card(card_header("Composição — Interna / Externa (USD)"),
            plotlyOutput("cl_debt_comp", height = "340px"))
     ),
-    card(
-      card_header("Amortizações de Bônus em 2026 (fechamento 2025)"),
-      div(
-        style = "padding: 20px; text-align: center;",
-        div(style = "font-size: 2rem; font-weight: 700; color: #1e3a5f;", "US$ 7.211 MM"),
-        div(style = "font-size: 0.8rem; color: #888; margin-top: 8px;",
-            "Fonte: Ministerio de Hacienda de Chile")
+    layout_columns(
+      col_widths = c(6, 6),
+      card(
+        card_header("Amortizações de Bônus em 2026 (fechamento 2025)"),
+        div(
+          style = "padding: 20px; text-align: center;",
+          div(style = "font-size: 2rem; font-weight: 700; color: #1e3a5f;", "US$ 7.211 MM"),
+          div(style = "font-size: 0.8rem; color: #888; margin-top: 8px;",
+              "Fonte: Ministerio de Hacienda de Chile")
+        )
+      ),
+      card(
+        card_header("Prazo Médio da Dívida"),
+        div(
+          style = "padding: 20px; text-align: center;",
+          div(style = "font-size: 2rem; font-weight: 700; color: #1e3a5f;", "10.4 anos"),
+          div(style = "font-size: 0.9rem; color: #555; margin-top: 6px;", "Fechamento 2025"),
+          div(style = "font-size: 0.8rem; color: #888; margin-top: 8px;",
+              "Fonte: Ministerio de Hacienda de Chile")
+        )
       )
     )
   ),
@@ -1868,6 +1955,10 @@ ui <- page_navbar(
     card(
       card_header("Perfil de Vencimentos — Deuda Interna (Mar 2026)"),
       plotlyOutput("mx_maturity", height = "380px")
+    ),
+    card(
+      card_header("Prazo Médio Ponderado da Dívida Interna — Mexico"),
+      plotlyOutput("mx_avg_maturity", height = "380px")
     )
   ),
 
@@ -1934,6 +2025,10 @@ ui <- page_navbar(
     card(
       card_header("Perfil de Vencimentos — Títulos Domésticos (Abr 2026)"),
       plotlyOutput("sa_maturity", height = "380px")
+    ),
+    card(
+      card_header("Prazo Médio Ponderado da Dívida — South Africa"),
+      plotlyOutput("sa_avg_maturity", height = "380px")
     )
   ),
 
@@ -1999,6 +2094,10 @@ ui <- page_navbar(
            plotlyOutput("co_holdings", height = "340px")),
       card(card_header("Perfil de Vencimento — TES Clase B (Jun 2026)"),
            plotlyOutput("co_maturity", height = "340px"))
+    ),
+    card(
+      card_header("Prazo Médio da Dívida Interna"),
+      htmlOutput("co_avg_maturity")
     )
   ),
 
@@ -2070,6 +2169,7 @@ server <- function(input, output, session) {
   output$mx_debt_comp       <- renderPlotly({ req(mexico); chart_debt_composition(mexico$debt, "mexico") })
   output$mx_holdings        <- renderPlotly({ req(mexico); chart_holdings(mexico$holdings, "mexico") })
   output$mx_maturity        <- renderPlotly({ req(mexico); chart_mexico_maturity(mexico$maturity) })
+  output$mx_avg_maturity    <- renderPlotly({ req(mexico); chart_mexico_avg_maturity(mexico$avg_maturity) })
 
   # ── South Africa ───────────────────────────────────────────
   output$sa_ytd         <- renderPlotly({ req(sa); chart_ytd(sa$lic, "south_africa", "ZAR tri") })
@@ -2089,6 +2189,7 @@ server <- function(input, output, session) {
   output$sa_debt_comp       <- renderPlotly({ req(sa); chart_debt_composition(sa$debt, "south_africa") })
   output$sa_holdings        <- renderPlotly({ req(sa); chart_holdings(sa$holdings, "south_africa") })
   output$sa_maturity        <- renderPlotly({ req(sa); chart_sa_maturity(sa$maturity) })
+  output$sa_avg_maturity    <- renderPlotly({ req(sa); chart_sa_avg_maturity(sa$avg_maturity) })
 
   # ── Colombia ───────────────────────────────────────────────
   output$co_monthly      <- renderPlotly({ req(colombia); chart_monthly(colombia$lic, "colombia", "COP tri") })
@@ -2107,6 +2208,20 @@ server <- function(input, output, session) {
   output$co_debt_comp       <- renderPlotly({ req(colombia); chart_debt_composition(colombia$debt, "colombia") })
   output$co_holdings        <- renderPlotly({ req(colombia); chart_colombia_holdings(colombia$holdings) })
   output$co_maturity        <- renderPlotly({ req(colombia); chart_colombia_maturity(colombia$maturity) })
+  output$co_avg_maturity    <- renderUI({
+    req(colombia)
+    row    <- colombia$avg_maturity |> slice(1)
+    valor  <- paste0(round(row$Vida_Media, 1), " anos")
+    parts  <- strsplit(row$Fecha_Corte, "-")[[1]]
+    mon    <- paste0(toupper(substr(parts[2], 1, 1)), substr(parts[2], 2, nchar(parts[2])))
+    subtitle <- paste0(mon, " ", parts[3])
+    div(style = "padding:20px; text-align:center;",
+      div(style = "font-size:2rem; font-weight:700; color:#1e3a5f;", valor),
+      div(style = "font-size:0.9rem; color:#555; margin-top:6px;", subtitle),
+      div(style = "font-size:0.75rem; color:#888; margin-top:8px;",
+          "Fonte: IRC — Perfil de Deuda TES Clase B")
+    )
+  })
 
   # ── Overview ───────────────────────────────────────────────
   output$overview_pre_pos <- renderPlotly({
