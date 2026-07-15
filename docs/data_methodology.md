@@ -126,7 +126,7 @@ All countries: filter `Year >= 2005` (or `FY_start >= 2005`).
 |---|---|---|---|---|---|
 | Chile | none | — | Ministerio de Hacienda (financing plan) | Annual (January) | Static KPI card: 10.4 anos, "Fechamento 2025" |
 | Mexico | `mexico_avg_maturity.csv` | `Periodo`, `Dias`, `Anos` | Banxico SG231 (monthly) | Daily (automated) | Bar chart: Dec obs from 2010, current year latest month |
-| South Africa | `south_africa_avg_maturity.csv` | `Fiscal_Year`, `WAM_Anos` | NT Budget Review Fig 7.2 (annual) | Annual (February) | Bar chart: 2013/14–2025/26; fixed-rate bonds only |
+| South Africa | `south_africa_avg_maturity.csv` | `Fiscal_Year`, `WAM_Anos` | NT Budget Review Fig 7.2 (annual) | Annual (February) | Bar chart: 2013/14–2025/26; R-bonds only — excludes T-bills, I-bonds, and FRNs (RN/RS) |
 | Colombia | `colombia_avg_maturity.csv` | `Fecha_Corte`, `Vida_Media` | IRC TES Perfil Deuda PDF p.1 | Manual monthly | KPI card: single snapshot, total TES (COP+UVR) |
 
 Mexico `Dias / 365 = Anos` conversion done in the R script (`mexico_avg_maturity.R`) before saving to CSV.

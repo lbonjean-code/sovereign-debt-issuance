@@ -280,7 +280,7 @@
 - **Frequency**: Annual — update manually with each Budget Review
 - **Columns**: `Fiscal_Year`, `WAM_Anos`
 - **Coverage**: 2013/14 to 2025/26
-- **Note**: Fixed-rate bonds only — excludes T-bills and inflation-linked bonds
+- **Note**: Fixed-rate bonds (R-bonds) only — excludes T-bills, inflation-linked bonds (I-bonds), and floating rate notes (RN/RS)
 
 ### Colombia
 - **File**: `colombia_avg_maturity.csv`
