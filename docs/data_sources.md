@@ -59,7 +59,7 @@
 ### GDP
 - **File**: `mexico_gdp.csv`
 - **Source**: [Banxico SIE API — Series SR17645](https://www.banxico.org.mx/SieAPIRest/service/v1/series/SR17645)
-- **Series**: SR17645 — "Produto interno bruto, a preços de mercado" (precios corrientes)
+- **Series**: SR17645 — "Producto interno bruto, a precios de mercado" (precios corrientes)
 - **Method**: Banxico REST API
 - **Frequency**: Updated daily (quarterly releases)
 - **Columns**: `Periodo` (quarterly date), `PIB`
@@ -250,3 +250,43 @@
 
 ### Chile
 - **Status**: SKIPPED — BCCh does not publish government-bond-specific sectoral holdings breakdown
+
+---
+
+## Prazo Médio da Dívida (Weighted Average Maturity)
+
+### Chile
+- **Type**: Static KPI card — no CSV
+- **Value**: 10.4 anos (fechamento 2025)
+- **Source**: [Ministerio de Hacienda — Datos de la Deuda Pública](https://www.hacienda.cl/areas-de-trabajo/finanzas-internacionales/oficina-de-la-deuda-publica/datos-de-la-deuda-publica-de-chile)
+- **Update frequency**: Annual — update manually each January with new financing plan
+- **Note**: Covers total government debt portfolio
+
+### Mexico
+- **File**: `mexico_avg_maturity.csv`
+- **Source**: Banxico SIE — Finanzas Públicas / Otros indicadores de deuda pública
+- **Series**: SG231 — Plazo promedio ponderado de vencimiento de valores gubernamentales
+- **Method**: Banxico REST API; values in days, converted to years (/365)
+- **Script**: `mexico_avg_maturity.R`
+- **Frequency**: Updated daily (monthly releases)
+- **Columns**: `Periodo`, `Dias`, `Anos`
+- **Note**: Covers all government securities including T-bills; chart shows December of each year from 2010 onwards
+
+### South Africa
+- **File**: `south_africa_avg_maturity.csv`
+- **Source**: National Treasury — Budget Review 2026, Chapter 7, Figure 7.2
+- **Method**: Hardcoded from published Budget Review; update annually each February/March
+- **Script**: `south_africa_avg_maturity.R`
+- **Frequency**: Annual — update manually with each Budget Review
+- **Columns**: `Fiscal_Year`, `WAM_Anos`
+- **Coverage**: 2013/14 to 2025/26
+- **Note**: Fixed-rate bonds only — excludes T-bills and inflation-linked bonds
+
+### Colombia
+- **File**: `colombia_avg_maturity.csv`
+- **Source**: IRC — TES Perfil Deuda PDF (page 1, "Vida Media" — Total column)
+- **Method**: Extracted from PDF alongside maturity profile in `colombia_maturity_holdings.R`
+- **Frequency**: ⚠️ MANUAL MONTHLY UPDATE — same as maturity profile
+- **Columns**: `Fecha_Corte`, `Vida_Media`
+- **Type**: Point-in-time snapshot — KPI card only, no historical series
+- **Note**: Covers total TES portfolio (COP + UVR combined)
