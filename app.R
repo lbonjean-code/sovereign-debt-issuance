@@ -462,11 +462,18 @@ chart_ytd <- function(lic, country, ccy_label) {
            margin = list(b = 80))
 }
 
-# ── 2. Monthly issuance — rolling 24-month window ───────────
-# Continuous timeline: one stacked bar per month, CP+LP, with a total line.
-chart_monthly <- function(lic, country, ccy_label) {
+# ── 2. Monthly issuance — rolling window or full history ─────
+chart_monthly <- function(lic, country, ccy_label, n_months = 24L) {
   today      <- Sys.Date()
-  start_date <- floor_date(today %m-% months(23), "month")  # 24 months incl. current
+  start_date <- if (is.null(n_months)) {
+    floor_date(min(lic$Fecha, na.rm = TRUE), "month")
+  } else {
+    floor_date(today %m-% months(n_months - 1L), "month")
+  }
+
+  span_months <- as.numeric(difftime(today, start_date, units = "days")) / 30
+  x_breaks <- if (span_months > 60) "2 years" else if (span_months > 30) "6 months" else "2 months"
+  x_labels <- if (span_months > 60) "%Y" else "%b %Y"
 
   monthly <- lic |>
     filter(Fecha >= start_date, Fecha <= today) |>
@@ -502,8 +509,8 @@ chart_monthly <- function(lic, country, ccy_label) {
     scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP)) +
     scale_colour_manual(values = c(Total = CLR_TOTAL)) +
     scale_x_date(
-      date_breaks = "2 months",
-      date_labels = "%b %Y",
+      date_breaks = x_breaks,
+      date_labels = x_labels,
       expand      = expansion(add = 15)
     ) +
     scale_y_continuous(
@@ -524,10 +531,17 @@ chart_monthly <- function(lic, country, ccy_label) {
 }
 
 # ── 3. Monthly issuance as % of rolling 12m GDP ─────────────
-# GDP denominator steps up only when a new quarterly release is available (LOCF).
-chart_monthly_pct_gdp <- function(lic, gdp, country, ccy_label) {
+chart_monthly_pct_gdp <- function(lic, gdp, country, ccy_label, n_months = 24L) {
   today      <- Sys.Date()
-  start_date <- floor_date(today %m-% months(23), "month")
+  start_date <- if (is.null(n_months)) {
+    floor_date(min(lic$Fecha, na.rm = TRUE), "month")
+  } else {
+    floor_date(today %m-% months(n_months - 1L), "month")
+  }
+
+  span_months <- as.numeric(difftime(today, start_date, units = "days")) / 30
+  x_breaks <- if (span_months > 60) "2 years" else if (span_months > 30) "6 months" else "2 months"
+  x_labels <- if (span_months > 60) "%Y" else "%b %Y"
 
   monthly <- lic |>
     filter(Fecha >= start_date, Fecha <= today) |>
@@ -586,8 +600,8 @@ chart_monthly_pct_gdp <- function(lic, gdp, country, ccy_label) {
     scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP)) +
     scale_colour_manual(values = c(Total = CLR_TOTAL)) +
     scale_x_date(
-      date_breaks = "2 months",
-      date_labels = "%b %Y",
+      date_breaks = x_breaks,
+      date_labels = x_labels,
       expand      = expansion(add = 15)
     ) +
     scale_y_continuous(
@@ -1850,7 +1864,11 @@ ui <- page_navbar(
   nav_panel(
     "Chile",
     card(
-      card_header("Emissões Mensais"),
+      card_header(
+        class = "d-flex justify-content-between align-items-center",
+        "Emissões Mensais",
+        checkboxInput("cl_monthly_all", "Histórico completo", value = FALSE)
+      ),
       plotlyOutput("cl_monthly", height = "320px")
     ),
     card(
@@ -1944,7 +1962,11 @@ ui <- page_navbar(
   nav_panel(
     "México",
     card(
-      card_header("Emissões Mensais"),
+      card_header(
+        class = "d-flex justify-content-between align-items-center",
+        "Emissões Mensais",
+        checkboxInput("mx_monthly_all", "Histórico completo", value = FALSE)
+      ),
       plotlyOutput("mx_monthly", height = "320px")
     ),
     card(
@@ -2014,7 +2036,11 @@ ui <- page_navbar(
   nav_panel(
     "África do Sul",
     card(
-      card_header("Emissões Mensais"),
+      card_header(
+        class = "d-flex justify-content-between align-items-center",
+        "Emissões Mensais",
+        checkboxInput("sa_monthly_all", "Histórico completo", value = FALSE)
+      ),
       plotlyOutput("sa_monthly", height = "320px")
     ),
     card(
@@ -2084,7 +2110,11 @@ ui <- page_navbar(
   nav_panel(
     "Colômbia",
     card(
-      card_header("Emissões Mensais"),
+      card_header(
+        class = "d-flex justify-content-between align-items-center",
+        "Emissões Mensais",
+        checkboxInput("co_monthly_all", "Histórico completo", value = FALSE)
+      ),
       plotlyOutput("co_monthly", height = "320px")
     ),
     card(
@@ -2188,8 +2218,8 @@ server <- function(input, output, session) {
   output$cl_ytd_pct_gdp <- renderPlotly({ req(chile); chart_ytd_pct_gdp(chile$lic, chile$gdp, "chile", "CLP tri") })
   output$cl_runrate     <- renderPlotly({ req(chile); chart_runrate(chile$lic, "chile", "CLP tri", target_val = 16.60) })
   output$cl_runrate_pct <- renderPlotly({ req(chile); chart_runrate_pct_gdp(chile$lic, chile$gdp, "chile") })
-  output$cl_monthly     <- renderPlotly({ req(chile); chart_monthly(chile$lic, "chile", "CLP tri") })
-  output$cl_monthly_pct <- renderPlotly({ req(chile); chart_monthly_pct_gdp(chile$lic, chile$gdp, "chile", "CLP tri") })
+  output$cl_monthly     <- renderPlotly({ req(chile); n <- if (isTRUE(input$cl_monthly_all)) NULL else 24L; chart_monthly(chile$lic, "chile", "CLP tri", n_months = n) })
+  output$cl_monthly_pct <- renderPlotly({ req(chile); n <- if (isTRUE(input$cl_monthly_all)) NULL else 24L; chart_monthly_pct_gdp(chile$lic, chile$gdp, "chile", "CLP tri", n_months = n) })
   output$cl_vs_target   <- renderPlotly({ req(chile); chart_vs_target(chile$lic, TARGET_CHILE, "chile", "CLP tri", "2026") })
   output$cl_tsy_seas    <- renderPlotly({ req(chile); chart_tsy_seasonal(chile$tsy, "chile", "USD bi") })
   output$cl_tsy_ts      <- renderPlotly({ req(chile); chart_tsy_ts(chile$tsy, "USD bi") })
@@ -2209,8 +2239,8 @@ server <- function(input, output, session) {
   output$mx_ytd_pct_gdp <- renderPlotly({ req(mexico); chart_ytd_pct_gdp(mexico$lic, mexico$gdp, "mexico", "MXN tri") })
   output$mx_runrate     <- renderPlotly({ req(mexico); chart_runrate(mexico$lic, "mexico", "MXN tri", target_val = 3.15) })
   output$mx_runrate_pct <- renderPlotly({ req(mexico); chart_runrate_pct_gdp(mexico$lic, mexico$gdp, "mexico") })
-  output$mx_monthly     <- renderPlotly({ req(mexico); chart_monthly(mexico$lic, "mexico", "MXN tri") })
-  output$mx_monthly_pct <- renderPlotly({ req(mexico); chart_monthly_pct_gdp(mexico$lic, mexico$gdp, "mexico", "MXN tri") })
+  output$mx_monthly     <- renderPlotly({ req(mexico); n <- if (isTRUE(input$mx_monthly_all)) NULL else 24L; chart_monthly(mexico$lic, "mexico", "MXN tri", n_months = n) })
+  output$mx_monthly_pct <- renderPlotly({ req(mexico); n <- if (isTRUE(input$mx_monthly_all)) NULL else 24L; chart_monthly_pct_gdp(mexico$lic, mexico$gdp, "mexico", "MXN tri", n_months = n) })
   output$mx_vs_target   <- renderPlotly({ req(mexico); chart_vs_target(mexico$lic, TARGET_MEXICO, "mexico", "MXN tri", "2026") })
   output$mx_tsy_seas    <- renderPlotly({ req(mexico); chart_tsy_seasonal(mexico$tsy, "mexico", "MXN bi") })
   output$mx_tsy_ts      <- renderPlotly({ req(mexico); chart_tsy_ts(mexico$tsy, "MXN bi") })
@@ -2229,8 +2259,8 @@ server <- function(input, output, session) {
   output$sa_ytd_pct_gdp <- renderPlotly({ req(sa); chart_ytd_pct_gdp(sa$lic, sa$gdp, "south_africa", "ZAR tri") })
   output$sa_runrate     <- renderPlotly({ req(sa); chart_runrate(sa$lic, "south_africa", "ZAR tri", target_val = 1.853) })
   output$sa_runrate_pct <- renderPlotly({ req(sa); chart_runrate_pct_gdp(sa$lic, sa$gdp, "south_africa") })
-  output$sa_monthly     <- renderPlotly({ req(sa); chart_monthly(sa$lic, "south_africa", "ZAR tri") })
-  output$sa_monthly_pct <- renderPlotly({ req(sa); chart_monthly_pct_gdp(sa$lic, sa$gdp, "south_africa", "ZAR tri") })
+  output$sa_monthly     <- renderPlotly({ req(sa); n <- if (isTRUE(input$sa_monthly_all)) NULL else 24L; chart_monthly(sa$lic, "south_africa", "ZAR tri", n_months = n) })
+  output$sa_monthly_pct <- renderPlotly({ req(sa); n <- if (isTRUE(input$sa_monthly_all)) NULL else 24L; chart_monthly_pct_gdp(sa$lic, sa$gdp, "south_africa", "ZAR tri", n_months = n) })
   output$sa_vs_target   <- renderPlotly({ req(sa); chart_vs_target(sa$lic, TARGET_SA, "south_africa", "ZAR tri", "2026/27") })
   output$sa_tsy_seas    <- renderPlotly({ req(sa); chart_tsy_seasonal(sa$tsy, "south_africa", "ZAR tri") })
   output$sa_tsy_ts      <- renderPlotly({ req(sa); chart_tsy_ts(sa$tsy, "ZAR tri") })
@@ -2244,8 +2274,8 @@ server <- function(input, output, session) {
   output$sa_avg_maturity    <- renderPlotly({ req(sa); chart_sa_avg_maturity(sa$avg_maturity) })
 
   # ── Colombia ───────────────────────────────────────────────
-  output$co_monthly      <- renderPlotly({ req(colombia); chart_monthly(colombia$lic, "colombia", "COP tri") })
-  output$co_monthly_pct  <- renderPlotly({ req(colombia); chart_monthly_pct_gdp(colombia$lic, colombia$gdp, "colombia", "COP tri") })
+  output$co_monthly      <- renderPlotly({ req(colombia); n <- if (isTRUE(input$co_monthly_all)) NULL else 24L; chart_monthly(colombia$lic, "colombia", "COP tri", n_months = n) })
+  output$co_monthly_pct  <- renderPlotly({ req(colombia); n <- if (isTRUE(input$co_monthly_all)) NULL else 24L; chart_monthly_pct_gdp(colombia$lic, colombia$gdp, "colombia", "COP tri", n_months = n) })
   output$co_ytd          <- renderPlotly({ req(colombia); chart_ytd(colombia$lic, "colombia", "COP tri") })
   output$co_ytd_pct_gdp  <- renderPlotly({ req(colombia); chart_ytd_pct_gdp(colombia$lic, colombia$gdp, "colombia", "COP tri") })
   output$co_runrate      <- renderPlotly({ req(colombia); chart_runrate(colombia$lic, "colombia", "COP tri") })
