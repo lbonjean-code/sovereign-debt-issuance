@@ -793,7 +793,64 @@ chart_pct_gdp <- function(lic, gdp, country) {
            margin = list(b = 80))
 }
 
-# ── 4. Emissions % PIB — seasonal (vs. historical IQR band) ──
+# ── 4. Weekly emissions snapshot (Mon–Fri of most recent week) ─
+chart_weekly_emissions <- function(lic, country, ccy_label) {
+  last_date <- suppressWarnings(max(lic$Fecha, na.rm = TRUE))
+  if (is.na(last_date)) return(plotly_placeholder())
+
+  wday      <- as.integer(format(last_date, "%u"))   # ISO: 1=Mon … 7=Sun
+  monday    <- last_date - (wday - 1L)
+  friday    <- monday + 4L
+  week_days <- seq.Date(monday, friday, by = "day")
+
+  tipo_lvls <- c("CP", "LP", "Entidades Públicas")
+  clrs      <- c(CP = CLR_CP, LP = CLR_LP, "Entidades Públicas" = CLR_EP)
+
+  df <- lic |>
+    filter(Fecha >= monday, Fecha <= friday) |>
+    mutate(Tipo = as.character(Tipo)) |>
+    group_by(Fecha, Tipo) |>
+    summarise(Monto = sum(Monto, na.rm = TRUE), .groups = "drop")
+
+  present_tipos <- if (nrow(df) > 0) intersect(tipo_lvls, unique(df$Tipo)) else tipo_lvls[1]
+
+  full_grid <- lapply(week_days, function(d) {
+    data.frame(Fecha = d, Tipo = present_tipos, stringsAsFactors = FALSE)
+  }) |>
+    bind_rows() |>
+    left_join(df, by = c("Fecha", "Tipo")) |>
+    mutate(
+      Monto = replace_na(Monto, 0),
+      label = format(Fecha, "%d/%m"),
+      Tipo  = factor(Tipo, levels = tipo_lvls)
+    ) |>
+    mutate(label = factor(label, levels = unique(label)))
+
+  if (all(full_grid$Monto == 0)) return(plotly_placeholder("Sem emissões nesta semana"))
+
+  p <- ggplot(full_grid, aes(
+    x    = label,
+    y    = Monto,
+    fill = Tipo,
+    text = paste0(format(Fecha, "%d/%m"), " — ", Tipo, "\n",
+                  round(Monto, 3), " ", ccy_label)
+  )) +
+    geom_col(width = 0.55, position = "stack") +
+    scale_fill_manual(values = clrs, name = NULL, drop = TRUE) +
+    scale_y_continuous(
+      labels = label_number(accuracy = 0.001),
+      expand = expansion(mult = c(0, 0.12))
+    ) +
+    labs(subtitle = paste0(
+      "Semana de ", format(monday, "%d/%m"), " a ", format(friday, "%d/%m/%Y")
+    )) +
+    PLOT_THEME
+
+  clean_legend(ggplotly(p, tooltip = "text")) |>
+    layout(legend = list(orientation = "h", y = -0.2))
+}
+
+# ── 5. Emissions % PIB — seasonal (vs. historical IQR band) ──
 chart_seasonal_pct_gdp <- function(lic, gdp, country) {
   today  <- Sys.Date()
   cur_fy <- current_fy(country)
@@ -2581,6 +2638,10 @@ ui <- page_navbar(
   nav_panel(
     "Chile",
     card(
+      card_header("Emissões Semanais"),
+      plotlyOutput("cl_weekly", height = "280px")
+    ),
+    card(
       card_header(
         class = "d-flex justify-content-between align-items-center",
         "Emissões Mensais",
@@ -2681,6 +2742,10 @@ ui <- page_navbar(
   nav_panel(
     "México",
     card(
+      card_header("Emissões Semanais"),
+      plotlyOutput("mx_weekly", height = "280px")
+    ),
+    card(
       card_header(
         class = "d-flex justify-content-between align-items-center",
         "Emissões Mensais",
@@ -2757,6 +2822,10 @@ ui <- page_navbar(
   nav_panel(
     "África do Sul",
     card(
+      card_header("Emissões Semanais"),
+      plotlyOutput("sa_weekly", height = "280px")
+    ),
+    card(
       card_header(
         class = "d-flex justify-content-between align-items-center",
         "Emissões Mensais",
@@ -2832,6 +2901,10 @@ ui <- page_navbar(
   # ── Colombia ───────────────────────────────────────────────
   nav_panel(
     "Colômbia",
+    card(
+      card_header("Emissões Semanais"),
+      plotlyOutput("co_weekly", height = "280px")
+    ),
     card(
       card_header(
         class = "d-flex justify-content-between align-items-center",
@@ -2970,6 +3043,7 @@ server <- function(input, output, session) {
   output$cl_monthly     <- renderPlotly({ req(chile); n <- if (isTRUE(input$cl_monthly_all)) NULL else 24L; chart_monthly(chile$lic, "chile", "CLP tri", n_months = n) })
   output$cl_monthly_pct <- renderPlotly({ req(chile); n <- if (isTRUE(input$cl_monthly_all)) NULL else 24L; chart_monthly_pct_gdp(chile$lic, chile$gdp, "chile", "CLP tri", n_months = n) })
   output$cl_vs_target   <- renderPlotly({ req(chile); chart_vs_target(chile$lic, TARGET_CHILE, "chile", "CLP tri", "2026") })
+  output$cl_weekly       <- renderPlotly({ req(chile); chart_weekly_emissions(chile$lic, "chile", "CLP tri") })
   output$cl_seasonal_pct <- renderPlotly({ req(chile); chart_seasonal_pct_gdp(chile$lic, chile$gdp, "chile") })
   output$cl_tsy_seas    <- renderPlotly({ req(chile); chart_tsy_seasonal(chile$tsy, "chile", "USD bi") })
   output$cl_tsy_ts      <- renderPlotly({ req(chile); chart_tsy_ts(chile$tsy, "USD bi") })
@@ -2992,6 +3066,7 @@ server <- function(input, output, session) {
   output$mx_monthly     <- renderPlotly({ req(mexico); n <- if (isTRUE(input$mx_monthly_all)) NULL else 24L; chart_monthly(mexico$lic, "mexico", "MXN tri", n_months = n) })
   output$mx_monthly_pct <- renderPlotly({ req(mexico); n <- if (isTRUE(input$mx_monthly_all)) NULL else 24L; chart_monthly_pct_gdp(mexico$lic, mexico$gdp, "mexico", "MXN tri", n_months = n) })
   output$mx_vs_target   <- renderPlotly({ req(mexico); chart_vs_target(mexico$lic, TARGET_MEXICO, "mexico", "MXN tri", "2026") })
+  output$mx_weekly       <- renderPlotly({ req(mexico); chart_weekly_emissions(mexico$lic, "mexico", "MXN tri") })
   output$mx_seasonal_pct <- renderPlotly({ req(mexico); chart_seasonal_pct_gdp(mexico$lic, mexico$gdp, "mexico") })
   output$mx_tsy_seas    <- renderPlotly({ req(mexico); chart_tsy_seasonal(mexico$tsy, "mexico", "MXN bi") })
   output$mx_tsy_ts      <- renderPlotly({ req(mexico); chart_tsy_ts(mexico$tsy, "MXN bi") })
@@ -3013,6 +3088,7 @@ server <- function(input, output, session) {
   output$sa_monthly     <- renderPlotly({ req(sa); n <- if (isTRUE(input$sa_monthly_all)) NULL else 24L; chart_monthly(sa$lic, "south_africa", "ZAR tri", n_months = n) })
   output$sa_monthly_pct <- renderPlotly({ req(sa); n <- if (isTRUE(input$sa_monthly_all)) NULL else 24L; chart_monthly_pct_gdp(sa$lic, sa$gdp, "south_africa", "ZAR tri", n_months = n) })
   output$sa_vs_target   <- renderPlotly({ req(sa); chart_vs_target(sa$lic, TARGET_SA, "south_africa", "ZAR tri", "2026/27") })
+  output$sa_weekly       <- renderPlotly({ req(sa); chart_weekly_emissions(sa$lic, "south_africa", "ZAR tri") })
   output$sa_seasonal_pct <- renderPlotly({ req(sa); chart_seasonal_pct_gdp(sa$lic, sa$gdp, "south_africa") })
   output$sa_tsy_seas    <- renderPlotly({ req(sa); chart_tsy_seasonal(sa$tsy, "south_africa", "ZAR tri") })
   output$sa_tsy_ts      <- renderPlotly({ req(sa); chart_tsy_ts(sa$tsy, "ZAR tri") })
@@ -3032,6 +3108,7 @@ server <- function(input, output, session) {
   output$co_ytd_pct_gdp  <- renderPlotly({ req(colombia); chart_ytd_pct_gdp(colombia$lic, colombia$gdp, "colombia", "COP tri") })
   output$co_runrate      <- renderPlotly({ req(colombia); chart_runrate(colombia$lic, "colombia", "COP tri") })
   output$co_runrate_pct  <- renderPlotly({ req(colombia); chart_runrate_pct_gdp(colombia$lic, colombia$gdp, "colombia") })
+  output$co_weekly       <- renderPlotly({ req(colombia); chart_weekly_emissions(colombia$lic, "colombia", "COP tri") })
   output$co_seasonal_pct <- renderPlotly({ req(colombia); chart_seasonal_pct_gdp(colombia$lic, colombia$gdp, "colombia") })
   output$co_tsy_seas     <- renderPlotly({ req(colombia); chart_tsy_seasonal(colombia$tsy, "colombia", "COP tri") })
   output$co_tsy_ts       <- renderPlotly({ req(colombia); chart_tsy_ts(colombia$tsy, "COP tri") })
