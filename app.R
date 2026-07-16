@@ -318,7 +318,8 @@ load_colombia <- function() {
     filter(Year >= 2005) |>
     arrange(Year)
 
-  holdings_co <- read_csv(path("colombia_holdings.csv"), show_col_types = FALSE)
+  holdings_co <- read_csv(path("colombia_holdings.csv"), show_col_types = FALSE) |>
+    mutate(Periodo = as.Date(Periodo))
 
   maturity <- read_csv(path("colombia_maturity.csv"), show_col_types = FALSE)
 
@@ -1520,59 +1521,77 @@ chart_holdings <- function(holdings, country) {
     )
 }
 
-# ── Colombia: TES holdings by sector (single-period snapshot) ─
+# ── Colombia: TES holdings by sector (time series, Dec obs + current) ──
 chart_colombia_holdings <- function(holdings) {
-  df <- holdings |>
-    mutate(Sector = case_when(
-      grepl("Pensiones|Cesantias",    Tenedor, ignore.case = TRUE) ~ "Fondos de Pensiones",
-      grepl("Capital Extranjero|Extranjero", Tenedor, ignore.case = TRUE) ~ "Extranjeros",
-      grepl("Bancos Comerciales",     Tenedor, ignore.case = TRUE) ~ "Bancos",
-      grepl("Seguros|Capitaliz",      Tenedor, ignore.case = TRUE) ~ "Seguros",
-      grepl("Banco de la Rep",        Tenedor, ignore.case = TRUE) ~ "Banco de la República",
-      TRUE                                                         ~ "Otros"
-    )) |>
-    group_by(Sector) |>
-    summarise(Total = sum(Total, na.rm = TRUE), .groups = "drop") |>
-    mutate(Pct = Total / sum(Total) * 100) |>
-    arrange(desc(Pct))
+  cur_yr <- year(Sys.Date())
 
-  if (nrow(df) == 0) return(plotly_placeholder())
-
+  plot_order <- c("Outros", "Banco de la República", "Seguros", "Bancos",
+                  "Fondos de Pensiones", "Extranjeros")
   seg_colors <- c(
-    "Fondos de Pensiones"  = "#4472C4",
-    "Extranjeros"          = "#E84855",
-    "Bancos"               = "#90C987",
-    "Seguros"              = "#FFC000",
-    "Banco de la República"= "#7030A0",
-    "Otros"                = "#AAAAAA"
+    "Extranjeros"           = "#E84855",
+    "Fondos de Pensiones"   = "#4472C4",
+    "Bancos"                = "#90C987",
+    "Seguros"               = "#FFC000",
+    "Banco de la República" = "#7030A0",
+    "Outros"                = "#AAAAAA"
   )
 
-  p <- plot_ly()
-  for (i in seq_len(nrow(df))) {
-    seg <- df$Sector[i]
-    pct <- df$Pct[i]
+  classified <- holdings |>
+    mutate(Sector = case_when(
+      grepl("Capital Extranjero|Extranjero",                                       Entidad, ignore.case = TRUE) ~ "Extranjeros",
+      grepl("Pensiones|Cesantias|Prima Media",                                     Entidad, ignore.case = TRUE) ~ "Fondos de Pensiones",
+      grepl("Bancos Comerciales|Financiamiento Comercial|Corporaciones Financieras", Entidad, ignore.case = TRUE) ~ "Bancos",
+      grepl("Seguros|Capitaliz",                                                   Entidad, ignore.case = TRUE) ~ "Seguros",
+      grepl("Banco de la Rep",                                                     Entidad, ignore.case = TRUE) ~ "Banco de la República",
+      TRUE ~ "Outros"
+    )) |>
+    group_by(Periodo, Sector) |>
+    summarise(Valor = sum(Valor, na.rm = TRUE), .groups = "drop") |>
+    group_by(Periodo) |>
+    mutate(Pct = Valor / sum(Valor) * 100) |>
+    ungroup()
+
+  completed <- classified |>
+    filter(year(Periodo) >= 2020, year(Periodo) < cur_yr, month(Periodo) == 12) |>
+    mutate(label = paste0(year(Periodo), " (Dec)"))
+
+  latest_dt   <- classified |> filter(year(Periodo) == cur_yr) |> pull(Periodo) |> max()
+  current_obs <- classified |>
+    filter(Periodo == latest_dt) |>
+    mutate(label = paste0(cur_yr, " (", format(latest_dt, "%B"), ")"))
+
+  plot_long <- bind_rows(completed, current_obs) |> arrange(Periodo)
+  if (nrow(plot_long) == 0) return(plotly_placeholder())
+
+  plot_data <- plot_long |>
+    select(label, Sector, Pct) |>
+    pivot_wider(names_from = Sector, values_from = Pct, values_fill = 0)
+
+  x_labels <- unique(plot_long$label)
+
+  p <- plot_ly(plot_data, x = ~factor(label, levels = x_labels))
+  for (seg in plot_order) {
+    if (!seg %in% names(plot_data)) next
+    pct_vals <- plot_data[[seg]]
     p <- add_bars(
       p,
-      x                = pct,
-      y                = list("Jun 2026"),
-      orientation      = "h",
+      y                = pct_vals,
       name             = seg,
-      marker           = list(color = seg_colors[seg]),
-      text             = ifelse(pct > 3, paste0(seg, "\n", round(pct, 1), "%"), ""),
+      marker           = list(color = seg_colors[[seg]]),
+      text             = ifelse(pct_vals > 3, paste0(round(pct_vals, 0), "%"), ""),
       textposition     = "inside",
       insidetextanchor = "middle",
-      hovertemplate    = paste0(seg, ": %{x:.1f}%<extra></extra>")
+      hovertemplate    = paste0(seg, ": %{y:.1f}%<extra></extra>")
     )
   }
 
   p |>
     layout(
-      barmode  = "stack",
-      title    = list(text = "Tenedores de TES — Jun 2026", font = list(size = 13)),
-      xaxis    = list(title = "", ticksuffix = "%", range = c(0, 101), tickformat = ".0f"),
-      yaxis    = list(title = "", showticklabels = FALSE),
-      legend   = list(orientation = "h", y = -0.15),
-      margin   = list(b = 80, t = 50)
+      barmode = "stack",
+      xaxis   = list(title = "", categoryorder = "array", categoryarray = x_labels),
+      yaxis   = list(title = "", ticksuffix = "%", range = c(0, 101), tickformat = ".0f"),
+      legend  = list(orientation = "h", y = -0.25),
+      margin  = list(b = 80)
     )
 }
 
@@ -2209,7 +2228,7 @@ ui <- page_navbar(
     ),
     layout_columns(
       col_widths = c(5, 7),
-      card(card_header("Tenedores de TES — Jun 2026"),
+      card(card_header("Tenedores de TES"),
            plotlyOutput("co_holdings", height = "340px")),
       card(card_header("Perfil de Vencimento — TES Clase B (Jun 2026)"),
            plotlyOutput("co_maturity", height = "340px"))
