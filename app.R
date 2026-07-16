@@ -814,14 +814,12 @@ chart_tsy_ts <- function(tsy, ccy_label, col = "Saldo") {
 # ── Cumulative run-rate charts ───────────────────────────────
 # Shared helper: cumulative monthly issuance by fiscal year
 # Returns a long data frame with FY, Mes_Fiscal, Cumulative columns.
-build_runrate <- function(lic, country, n_prev = 3) {
+build_runrate <- function(lic, country, n_prev = NULL) {
   today         <- Sys.Date()
   cur_fy        <- current_fy(country)
-  fy_years      <- (cur_fy - n_prev):cur_fy
+  fy_years      <- sort(unique(lic$FY))
   cur_fis_month <- fiscal_month(today, country)
 
-  # End the current-year line at the last month with actual auction data,
-  # not necessarily the current calendar month (data may lag by weeks).
   cur_months      <- lic |> filter(FY == cur_fy) |> pull(Mes_Fiscal)
   last_data_month <- if (length(cur_months) == 0) 0L else max(cur_months, na.rm = TRUE)
   cutoff_month    <- min(cur_fis_month, last_data_month)
@@ -842,17 +840,15 @@ build_runrate <- function(lic, country, n_prev = 3) {
 plot_runrate <- function(df, country, y_label, subtitle_extra = "",
                          target_lines = NULL) {
   cur_fy    <- max(df$FY)
+  prev_fy   <- cur_fy - 1L
   lbl       <- month_labels(country)
   fy_levels <- sort(unique(df$FY))
   fy_fmts   <- sapply(fy_levels, fmt_fy, country = country)
+  n         <- length(fy_levels)
 
-  # Color + size by year (current = red/bold, others fade to grey)
-  clrs  <- setNames(
-    c("#BBBBBB", "#78909C", "#5B9BD5", CLR_CURRENT)[seq_along(fy_levels)],
-    fy_fmts
-  )
-  sizes <- setNames(
-    c(0.6, 0.7, 0.8, 1.4)[seq_along(fy_levels)],
+  # All years except last 2 → grey; second-to-last → blue; current → red
+  clrs <- setNames(
+    c(rep("#BBBBBB", max(0L, n - 2L)), "#5B9BD5", CLR_CURRENT),
     fy_fmts
   )
 
@@ -861,17 +857,29 @@ plot_runrate <- function(df, country, y_label, subtitle_extra = "",
     Month_lbl = lbl[Mes_Fiscal]
   )
 
-  df_hist <- df |> filter(FY < cur_fy)
+  df_old  <- df |> filter(FY < prev_fy)
+  df_prev <- df |> filter(FY == prev_fy)
   df_curr <- df |> filter(FY == cur_fy)
 
-  p <- ggplot() +
-    geom_line(data = df_hist,
-              aes(x = Mes_Fiscal, y = Cumulative, color = FY_label,
-                  group = FY_label,
-                  text = paste0(FY_label, " — ", Month_lbl, "\n",
-                                round(Cumulative, 3), " ", y_label)),
-              linewidth = 0.75) +
-    geom_line(data = df_curr,
+  p <- ggplot()
+
+  if (nrow(df_old) > 0) {
+    p <- p + geom_line(data = df_old,
+                aes(x = Mes_Fiscal, y = Cumulative, color = FY_label,
+                    group = FY_label,
+                    text = paste0(FY_label, " — ", Month_lbl, "\n",
+                                  round(Cumulative, 3), " ", y_label)),
+                linewidth = 0.5)
+  }
+  if (nrow(df_prev) > 0) {
+    p <- p + geom_line(data = df_prev,
+                aes(x = Mes_Fiscal, y = Cumulative, color = FY_label,
+                    group = FY_label,
+                    text = paste0(FY_label, " — ", Month_lbl, "\n",
+                                  round(Cumulative, 3), " ", y_label)),
+                linewidth = 0.9)
+  }
+  p <- p + geom_line(data = df_curr,
               aes(x = Mes_Fiscal, y = Cumulative, color = FY_label,
                   group = FY_label,
                   text = paste0(FY_label, " — ", Month_lbl, "\n",
@@ -907,9 +915,14 @@ chart_runrate <- function(lic, country, ccy_label, target_val = NULL) {
     data.frame(Label = paste0("Meta ", fmt_fy(max(df$FY), country)), Value = target_val)
   } else NULL
 
-  p <- plot_runrate(df, country, ccy_label, target_lines = tgt)
-  clean_legend(ggplotly(p, tooltip = "text")) |>
-    layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
+  keep_fmts <- tail(sapply(sort(unique(df$FY)), fmt_fy, country = country), 2)
+  p   <- plot_runrate(df, country, ccy_label, target_lines = tgt)
+  plt <- clean_legend(ggplotly(p, tooltip = "text"))
+  for (i in seq_along(plt$x$data)) {
+    nm <- gsub("\\((.+),\\d+\\)", "\\1", plt$x$data[[i]]$name)
+    if (!nm %in% keep_fmts) plt$x$data[[i]]$showlegend <- FALSE
+  }
+  plt |> layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
 }
 
 # % of rolling 12m GDP version
@@ -936,6 +949,7 @@ chart_runrate_pct_gdp <- function(lic, gdp, country) {
     filter(!is.na(PIB_tri)) |>
     mutate(Cumulative = Cumulative / PIB_tri * 100)
 
+  keep_fmts <- tail(sapply(sort(unique(df$FY)), fmt_fy, country = country), 2)
   p <- plot_runrate(df, country, "% PIB",
                     subtitle_extra = "PIB acumulado 12 meses") +
     scale_y_continuous(
@@ -943,8 +957,12 @@ chart_runrate_pct_gdp <- function(lic, gdp, country) {
       expand = expansion(mult = c(0, 0.1))
     )
 
-  clean_legend(ggplotly(p, tooltip = "text")) |>
-    layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
+  plt <- clean_legend(ggplotly(p, tooltip = "text"))
+  for (i in seq_along(plt$x$data)) {
+    nm <- gsub("\\((.+),\\d+\\)", "\\1", plt$x$data[[i]]$name)
+    if (!nm %in% keep_fmts) plt$x$data[[i]]$showlegend <- FALSE
+  }
+  plt |> layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
 }
 
 # ── Debt composition donut (YTD, current fiscal year) ────────
@@ -1249,7 +1267,8 @@ chart_debt_pct_gdp <- function(debt, gdp, country) {
   if (nrow(df) == 0) return(plotly_empty(type = "bar"))
 
   month_suffix <- if (country == "south_africa") " (Mar)" else if (country == "chile") " (Oct)" else " (Dec)"
-  df <- df |> mutate(X_label = paste0(X_label, month_suffix))
+  last_label   <- tail(df$X_label, 1)
+  df <- df |> mutate(X_label = if_else(X_label == last_label, paste0(X_label, month_suffix), X_label))
 
   x_levels <- unique(df$X_label)
 
@@ -1301,7 +1320,8 @@ chart_debt_composition <- function(debt, country) {
   debt_lbl <- if (country == "mexico") "Deuda Neta" else if (country == "chile") "Deuda Bruta (USD)" else "Deuda Bruta"
 
   month_suffix <- if (country == "south_africa") " (Mar)" else if (country == "chile") " (Oct)" else " (Dec)"
-  debt <- debt |> mutate(X_label = paste0(X_label, month_suffix))
+  last_label   <- tail(debt$X_label, 1)
+  debt <- debt |> mutate(X_label = if_else(X_label == last_label, paste0(X_label, month_suffix), X_label))
 
   df_long <- debt |>
     mutate(
