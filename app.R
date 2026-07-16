@@ -146,15 +146,27 @@ load_chile <- function() {
 
 # ── Mexico ───────────────────────────────────────────────────
 load_mexico <- function() {
+  # UDI/MXN daily rate — forward-filled to cover weekends/holidays
+  udi_raw <- read_csv(path("mexico_udi.csv"), show_col_types = FALSE) |>
+    mutate(Fecha = as.Date(Fecha)) |>
+    arrange(Fecha)
+  udi_daily <- tibble(Fecha = seq(min(udi_raw$Fecha), Sys.Date(), by = "day")) |>
+    left_join(udi_raw, by = "Fecha") |>
+    fill(UDI_MXN, .direction = "down")
+
   lic <- read_csv(path("mexico_licitaciones.csv"), show_col_types = FALSE) |>
     filter(!is.na(Fecha), !is.na(Monto)) |>
+    mutate(Fecha = as.Date(Fecha)) |>
+    left_join(udi_daily, by = "Fecha") |>
     mutate(
-      Fecha      = as.Date(Fecha),
+      # Convert Udibono amounts from millions UDI → millions MXN before scaling
+      Monto      = if_else(Instrumento == "Udibono", Monto * UDI_MXN, Monto),
       Monto      = Monto / 1e6,
       Tipo       = if_else(Plazo <= 365, "CP", "LP"),
       FY         = fy_mexico(Fecha),
       Mes_Fiscal = month(Fecha)
     ) |>
+    select(-UDI_MXN) |>
     filter(Fecha >= as.Date("2000-01-01"), Fecha <= Sys.Date())
 
   tsy <- read_csv(path("mexico_treasury.csv"), show_col_types = FALSE) |>
