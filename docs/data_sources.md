@@ -43,8 +43,16 @@
 - **Frequency**: Updated daily (8am + 6pm runs)
 - **Instruments & Series**: Cetes (5 tenors), Bono M (6), Udibono (5), Bondes D (4), Bondes F (5)
 - **Columns**: `Fecha`, `Instrumento`, `Tenor` (CP/LP), `Plazo`, `Monto` (millions MXN), `Tasa`, `Precio_Ponderado`
-- **Units**: Millions of MXN
+- **Units**: Millions of MXN (all instruments, including Udibonos — see UDI conversion below)
 - **Notes**: Bondes use `Precio_Ponderado` instead of `Tasa`; afternoon auctions caught by 6pm run
+
+### UDI/MXN Exchange Rate
+- **File**: `mexico_udi.csv`
+- **Source**: Banxico — Unidad de Inversión (UDI) daily value
+- **Method**: Banxico REST API; updated alongside licitaciones in the same daily run
+- **Frequency**: Updated daily (8am + 6pm runs)
+- **Columns**: `Fecha`, `UDI_MXN` (MXN per UDI)
+- **Purpose**: Udibono auction amounts in the raw source are in millions of UDI, not MXN. At load time, each Udibono row is multiplied by the UDI/MXN rate on its auction date (forward-filled for weekends/holidays) to convert to millions of MXN, making all instruments comparable
 
 ### Treasury Cash Balance
 - **File**: `mexico_treasury.csv`
