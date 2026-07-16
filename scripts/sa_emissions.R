@@ -199,7 +199,11 @@ parse_bond_sheets <- function(url, ext, tipo) {
     is_millions  <- grepl("million", amount_label, ignore.case = TRUE) |
                     grepl("R'm", amount_label, fixed = TRUE)
     amounts <- suppressWarnings(as.numeric(as.character(unlist(raw[r_alloc, data_cols]))))
-    if (is_millions) amounts <- amounts * 1e6
+    if (is_millions) {
+      pos_vals <- amounts[!is.na(amounts) & amounts > 0]
+      # If any value >= 1e6 the file mislabels "R million" but stores raw Rands
+      if (length(pos_vals) > 0 && max(pos_vals) < 1e6) amounts <- amounts * 1e6
+    }
 
     yields <- if (!is.na(r_yield)) {
       fix_yield(suppressWarnings(as.numeric(as.character(unlist(raw[r_yield, data_cols])))))
