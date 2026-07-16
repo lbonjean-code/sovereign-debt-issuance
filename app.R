@@ -254,8 +254,16 @@ load_sa <- function() {
 
   avg_maturity <- read_csv(path("south_africa_avg_maturity.csv"), show_col_types = FALSE)
 
+  auction_det_path <- path("sa_auction_details.csv")
+  auction_det <- if (file.exists(auction_det_path)) {
+    read_csv(auction_det_path, show_col_types = FALSE) |>
+      mutate(Fecha_Subasta = as.Date(Fecha_Subasta))
+  } else {
+    NULL
+  }
+
   list(lic = lic, tsy = tsy, gdp = gdp, debt = debt, holdings = holdings,
-       maturity = maturity, avg_maturity = avg_maturity)
+       maturity = maturity, avg_maturity = avg_maturity, auction_det = auction_det)
 }
 
 load_colombia <- function() {
@@ -2514,6 +2522,88 @@ chart_sa_avg_maturity <- function(avg_maturity) {
     layout(margin = list(b = 80))
 }
 
+# ── South Africa: bid-to-cover ratio over time ───────────────
+chart_sa_btc <- function(det) {
+  if (is.null(det) || nrow(det) == 0) return(plotly_placeholder("Dados de BTC não disponíveis"))
+
+  cutoff <- Sys.Date() - 365 * 5
+  df <- det |>
+    filter(!is.na(BTC), BTC > 0, BTC < 20) |>
+    group_by(Bono) |>
+    filter(max(Fecha_Subasta) >= cutoff) |>
+    ungroup() |>
+    filter(Fecha_Subasta >= cutoff) |>
+    mutate(tooltip = paste0(format(Fecha_Subasta, "%d/%m/%Y"), "\n", Bono,
+                            "\nBTC: ", round(BTC, 2), "x",
+                            "\nMonto: ZAR ", format(round(Monto_Asignado / 1e9, 1), nsmall = 1), "bn"))
+
+  if (nrow(df) == 0) return(plotly_placeholder("Sem dados"))
+
+  p <- ggplot(df, aes(x = Fecha_Subasta, y = BTC, color = Bono, text = tooltip)) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "#AAAAAA", linewidth = 0.4) +
+    geom_line(linewidth = 0.35, alpha = 0.55) +
+    geom_point(size = 1.8) +
+    scale_x_date(date_labels = "%b %Y", date_breaks = "6 months") +
+    scale_y_continuous(labels = label_number(suffix = "x", accuracy = 0.1)) +
+    labs(subtitle = "Títulos de taxa fixa — últimos 5 anos", x = NULL, y = "Bid-to-Cover") +
+    PLOT_THEME +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+  clean_legend(ggplotly(p, tooltip = "text")) |>
+    layout(legend = list(orientation = "h", y = -0.25))
+}
+
+# ── South Africa: clearing yield vs best bid (new issue premium) ─
+chart_sa_yield <- function(det) {
+  if (is.null(det) || nrow(det) == 0) return(plotly_placeholder("Dados de yield não disponíveis"))
+
+  cutoff <- Sys.Date() - 365 * 5
+  df <- det |>
+    filter(!is.na(Tasa_Corte), !is.na(Mejor_Oferta),
+           !is.na(Monto_Asignado), Monto_Asignado > 0,
+           Tasa_Corte > 0, Mejor_Oferta > 0) |>
+    filter(Fecha_Subasta >= cutoff) |>
+    group_by(Fecha_Subasta) |>
+    summarise(
+      Yield_Corte  = weighted.mean(Tasa_Corte,   Monto_Asignado, na.rm = TRUE),
+      Melhor_Oferta = weighted.mean(Mejor_Oferta, Monto_Asignado, na.rm = TRUE),
+      .groups = "drop"
+    ) |>
+    mutate(
+      NIP_bps = round((Yield_Corte - Melhor_Oferta) * 100, 1),
+      tip_corte = paste0(format(Fecha_Subasta, "%d/%m/%Y"),
+                         "\nTaxa de Corte: ", round(Yield_Corte, 3), "%",
+                         "\nPrêmio s/ melhor oferta: ", NIP_bps, " bps"),
+      tip_melhor = paste0(format(Fecha_Subasta, "%d/%m/%Y"),
+                          "\nMelhor Oferta: ", round(Melhor_Oferta, 3), "%")
+    )
+
+  if (nrow(df) == 0) return(plotly_placeholder("Sem dados"))
+
+  CLR_CORTE  <- "#4472C4"
+  CLR_MELHOR <- "#ED7D31"
+
+  plot_ly(df, x = ~Fecha_Subasta) |>
+    add_lines(y = ~Yield_Corte,   name = "Taxa de Corte",
+              line = list(color = CLR_CORTE, width = 1.8),
+              text = ~tip_corte, hoverinfo = "text") |>
+    add_lines(y = ~Melhor_Oferta, name = "Melhor Oferta (proxy mercado)",
+              line = list(color = CLR_MELHOR, width = 1.8, dash = "dot"),
+              text = ~tip_melhor, hoverinfo = "text") |>
+    layout(
+      xaxis  = list(title = "", tickformat = "%b %Y"),
+      yaxis  = list(title = "Yield (%)", ticksuffix = "%"),
+      legend = list(orientation = "h", y = -0.2),
+      annotations = list(list(
+        x = 0, y = -0.22, xref = "paper", yref = "paper",
+        text = "Yield médio ponderado por licitação — últimos 5 anos | Fonte: National Treasury",
+        showarrow = FALSE, xanchor = "left",
+        font = list(size = 9, color = "#888888")
+      ))
+    ) |>
+    config(displayModeBar = FALSE)
+}
+
 chart_vs_target <- function(lic, targets, country, ccy_label, year_label) {
   today        <- Sys.Date()
   cur_fy       <- current_fy(country)
@@ -2868,6 +2958,13 @@ ui <- page_navbar(
     ),
     layout_columns(
       col_widths = c(6, 6),
+      card(card_header("Bid-to-Cover por Licitação"),
+           plotlyOutput("sa_btc",   height = "360px")),
+      card(card_header("Yield de Corte vs. Melhor Oferta"),
+           plotlyOutput("sa_yield", height = "360px"))
+    ),
+    layout_columns(
+      col_widths = c(6, 6),
       card(card_header("Composição — Instrumento"),
            plotlyOutput("sa_composition",     height = "360px")),
       card(card_header("Composição — Moeda"),
@@ -3100,6 +3197,8 @@ server <- function(input, output, session) {
   output$sa_holdings        <- renderPlotly({ req(sa); chart_holdings(sa$holdings, "south_africa") })
   output$sa_maturity        <- renderPlotly({ req(sa); chart_sa_maturity(sa$maturity) })
   output$sa_avg_maturity    <- renderPlotly({ req(sa); chart_sa_avg_maturity(sa$avg_maturity) })
+  output$sa_btc             <- renderPlotly({ req(sa); chart_sa_btc(sa$auction_det) })
+  output$sa_yield           <- renderPlotly({ req(sa); chart_sa_yield(sa$auction_det) })
 
   # ── Colombia ───────────────────────────────────────────────
   output$co_monthly      <- renderPlotly({ req(colombia); n <- if (isTRUE(input$co_monthly_all)) NULL else 24L; chart_monthly(colombia$lic, "colombia", "COP tri", n_months = n) })
