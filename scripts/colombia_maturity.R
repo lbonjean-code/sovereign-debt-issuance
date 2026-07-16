@@ -1,7 +1,11 @@
-# Colombia TES Internal Debt Profile - Maturity Profile + Holdings by Sector
+# Colombia TES Internal Debt Profile - Maturity Profile + Vida Media
 # Downloads monthly PDF from IRC and extracts:
 # 1. Portafolio por Año de Vencimiento (page 3) - maturity profile
-# 2. Saldo por Grupo de Tenedores (page 11) - holdings by sector
+# 2. Vida Media (Weighted Average Maturity) (page 1)
+# NOTE: Holdings by sector (previously extracted from page 11 of this PDF)
+# now comes from a better source — see colombia_holdings.R, which reads the
+# full historical time series from a separate IRC workbook. Do not re-add
+# holdings extraction here, to avoid two scripts writing colombia_holdings.csv.
 # Source: https://www.irc.gov.co/documents/d/guest/tes-perfil-deuda-{mon}-{day}?download=true
 # Units: Millions of COP
 
@@ -11,8 +15,8 @@ library(stringr)
 library(httr)
 
 # --- Config ---
-maturity_path <- "\\\\jgprjfileserver\\Compartilhadas\\Summer\\lbonjean\\fixed income\\data\\colombia_maturity.csv"
-holdings_path <- "\\\\jgprjfileserver\\Compartilhadas\\Summer\\lbonjean\\fixed income\\data\\colombia_holdings.csv"
+maturity_path    <- "C:\\Users\\lbonjean\\Documents\\sovereign_bond_tracker\\data\\colombia_maturity.csv"
+vida_media_path  <- "C:\\Users\\lbonjean\\Documents\\sovereign_bond_tracker\\data\\colombia_avg_maturity.csv"
 
 # --- Month mapping ---
 months_map <- c(
@@ -70,59 +74,16 @@ maturity <- lapply(maturity_lines, function(line) {
 cat("Maturity profile rows:", nrow(maturity), "\n")
 print(maturity)
 
-# -------------------------------------------------------
-# EXTRACT HOLDINGS BY SECTOR (page 11)
-# -------------------------------------------------------
-page11 <- txt[[11]]
-lines11 <- strsplit(page11, "\n")[[1]]
-
-holders_pattern <- paste(c(
-  "Fondos de Pensiones",
-  "Fondos de Capital Extranjero",
-  "Bancos Comerciales",
-  "Compa.*as de Seguros",
-  "Banco de la Republica",
-  "Fiducia Publica",
-  "Carteras Colectivas",
-  "Instituciones Oficiales",
-  "Compa.*as de Financiamiento",
-  "Corporaciones Financieras",
-  "Comisionistas"
-), collapse = "|")
-
-holdings_lines <- lines11[grepl(holders_pattern, lines11, ignore.case = TRUE)]
-
-holdings <- lapply(holdings_lines, function(line) {
-  parts <- str_split(trimws(line), "\\s{2,}")[[1]]
-  parts <- parts[parts != ""]
-  if (length(parts) < 2) return(NULL)
-  name  <- parts[1]
-  nums  <- suppressWarnings(as.numeric(gsub("\\.", "", parts[-1])))
-  nums  <- nums[!is.na(nums) & nums > 1000]
-  if (length(nums) == 0) return(NULL)
-  total <- nums[length(nums)]
-  data.frame(Tenedor = trimws(name), Total = total)
-}) %>%
-  bind_rows() %>%
-  filter(!is.na(Total))
-
-cat("Holdings rows:", nrow(holdings), "\n")
-print(holdings)
-
 # --- Add fecha corte ---
 maturity$Fecha_Corte <- fecha_corte
-holdings$Fecha_Corte <- fecha_corte
 
 # --- Save ---
 write.csv(maturity, maturity_path, row.names = FALSE)
 cat("Maturity profile saved to", maturity_path, "\n")
 
-write.csv(holdings, holdings_path, row.names = FALSE)
-cat("Holdings saved to", holdings_path, "\n")
-
-# Add to colombia_maturity_holdings.R after the holdings extraction
-
-# --- Extract Vida Media (Weighted Average Maturity) from page 1 ---
+# -------------------------------------------------------
+# EXTRACT VIDA MEDIA (Weighted Average Maturity) (page 1)
+# -------------------------------------------------------
 page1 <- txt[[1]]
 lines1 <- strsplit(page1, "\n")[[1]]
 
@@ -143,6 +104,5 @@ vida_media_df <- data.frame(
   Vida_Media  = vida_media_total
 )
 
-vida_media_path <- "\\\\jgprjfileserver\\Compartilhadas\\Summer\\lbonjean\\fixed income\\data\\colombia_avg_maturity.csv"
 write.csv(vida_media_df, vida_media_path, row.names = FALSE)
 cat("Vida Media saved to", vida_media_path, "\n")
