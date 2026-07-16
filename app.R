@@ -1436,6 +1436,202 @@ chart_ytd_pct_gdp_overview <- function(
     layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
 }
 
+# ── Overview: 2026 cumulative run-rate % PIB — 4-country line ─
+chart_runrate_pct_gdp_overview <- function(
+    chile_lic, chile_gdp, mx_lic, mx_gdp,
+    sa_lic, sa_gdp, co_lic, co_gdp) {
+
+  today <- Sys.Date()
+
+  country_colors <- c(
+    "Chile"         = "#4472C4",
+    "México"        = "#70AD47",
+    "África do Sul" = "#ED7D31",
+    "Colômbia"      = "#7030A0"
+  )
+
+  get_runrate_pct <- function(lic, gdp, country, label) {
+    cur_fy       <- current_fy(country)
+    fy_start_str <- if (country == "south_africa") "-04-01" else "-01-01"
+
+    df <- build_runrate(lic, country) |> filter(FY == cur_fy)
+    if (nrow(df) == 0) return(NULL)
+
+    gdp_pts    <- gdp |> filter(!is.na(PIB_tri)) |> arrange(Periodo)
+    lookup_dt  <- min(as.Date(paste0(cur_fy + 1, fy_start_str)) - 1, today)
+    candidates <- gdp_pts$PIB_tri[gdp_pts$Periodo <= lookup_dt]
+    if (length(candidates) == 0) return(NULL)
+
+    df |> mutate(Pct = Cumulative / tail(candidates, 1) * 100, Country = label)
+  }
+
+  df <- bind_rows(
+    get_runrate_pct(chile_lic, chile_gdp, "chile",        "Chile"),
+    get_runrate_pct(mx_lic,    mx_gdp,    "mexico",       "México"),
+    get_runrate_pct(sa_lic,    sa_gdp,    "south_africa", "África do Sul"),
+    get_runrate_pct(co_lic,    co_gdp,    "colombia",     "Colômbia")
+  )
+
+  if (is.null(df) || nrow(df) == 0) return(plotly_placeholder())
+
+  p <- ggplot(df, aes(
+    x     = Mes_Fiscal,
+    y     = Pct,
+    color = Country,
+    group = Country,
+    text  = paste0(Country, " — Mês Fiscal ", Mes_Fiscal, "\n",
+                   round(Pct, 2), "% do PIB")
+  )) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2.5) +
+    scale_color_manual(values = country_colors, name = NULL) +
+    scale_x_continuous(breaks = 1:12, labels = 1:12) +
+    scale_y_continuous(
+      labels = label_percent(scale = 1, accuracy = 0.01),
+      expand = expansion(mult = c(0, 0.1))
+    ) +
+    labs(subtitle = paste0(
+      "Emissão acumulada AF 2026 | Mês 1 = Jan (CL/MX/CO), Abr (SA)",
+      " | PIB acumulado 12 meses"
+    )) +
+    PLOT_THEME
+
+  ggplotly(p, tooltip = "text") |>
+    layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
+}
+
+# ── Overview: treasury balance as % of historical median ─────
+chart_tsy_median_overview <- function(chile_tsy, mx_tsy, sa_tsy, co_tsy) {
+
+  country_colors <- c(
+    "Chile"         = "#4472C4",
+    "México"        = "#70AD47",
+    "África do Sul" = "#ED7D31",
+    "Colômbia"      = "#7030A0"
+  )
+
+  get_pct_median <- function(tsy, country, label) {
+    cur_fy <- current_fy(country)
+    hist   <- tsy |> filter(FY < cur_fy)
+    cur    <- tsy |> filter(FY == cur_fy)
+    if (nrow(hist) == 0 || nrow(cur) == 0) return(NULL)
+
+    medians <- hist |>
+      group_by(Mes_Fiscal) |>
+      summarise(Med = median(Saldo, na.rm = TRUE), .groups = "drop")
+
+    cur |>
+      left_join(medians, by = "Mes_Fiscal") |>
+      filter(!is.na(Med), Med != 0) |>
+      mutate(
+        Pct_Med = Saldo / Med * 100,
+        Country = label
+      ) |>
+      select(Mes_Fiscal, Saldo, Med, Pct_Med, Country)
+  }
+
+  df <- bind_rows(
+    get_pct_median(chile_tsy, "chile",        "Chile"),
+    get_pct_median(mx_tsy,    "mexico",       "México"),
+    get_pct_median(sa_tsy,    "south_africa", "África do Sul"),
+    get_pct_median(co_tsy,    "colombia",     "Colômbia")
+  )
+
+  if (is.null(df) || nrow(df) == 0) return(plotly_placeholder())
+
+  p <- ggplot(df, aes(
+    x     = Mes_Fiscal,
+    y     = Pct_Med,
+    color = Country,
+    group = Country,
+    text  = paste0(Country, " — Mês Fiscal ", Mes_Fiscal, "\n",
+                   round(Pct_Med, 1), "% da mediana histórica")
+  )) +
+    geom_hline(yintercept = 100, linetype = "dashed",
+               color = "grey50", linewidth = 0.6) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2.5) +
+    scale_color_manual(values = country_colors, name = NULL) +
+    scale_x_continuous(breaks = 1:12, labels = 1:12) +
+    scale_y_continuous(
+      labels = label_percent(scale = 1, accuracy = 1)
+    ) +
+    labs(
+      subtitle = "Saldo do tesouro AF 2026 como % da mediana histórica por mês fiscal | Mês 1 = Jan (CL/MX/CO), Abr (SA)"
+    ) +
+    PLOT_THEME
+
+  ggplotly(p, tooltip = "text") |>
+    layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
+}
+
+# ── Overview: % da Meta Total atingida por país ──────────────
+chart_meta_progress <- function(chile_lic, mx_lic, sa_lic, co_lic) {
+
+  total_targets <- c(
+    "Chile"         = 22.32,
+    "México"        = 3.15,
+    "África do Sul" = 1.853,
+    "Colômbia"      = 144
+  )
+
+  country_colors <- c(
+    "Chile"         = "#4472C4",
+    "México"        = "#70AD47",
+    "África do Sul" = "#ED7D31",
+    "Colômbia"      = "#7030A0"
+  )
+
+  country_order <- c("Chile", "México", "África do Sul", "Colômbia")
+
+  get_progress <- function(lic, country, label) {
+    cur_fy <- current_fy(country)
+    df     <- build_runrate(lic, country) |> filter(FY == cur_fy)
+    if (nrow(df) == 0) return(NULL)
+    ytd <- max(df$Cumulative, na.rm = TRUE)
+    data.frame(
+      Country = label,
+      YTD     = ytd,
+      Target  = total_targets[[label]],
+      Pct     = ytd / total_targets[[label]] * 100
+    )
+  }
+
+  df <- bind_rows(
+    get_progress(chile_lic, "chile",        "Chile"),
+    get_progress(mx_lic,    "mexico",       "México"),
+    get_progress(sa_lic,    "south_africa", "África do Sul"),
+    get_progress(co_lic,    "colombia",     "Colômbia")
+  )
+
+  if (is.null(df) || nrow(df) == 0) return(plotly_placeholder())
+
+  df <- df |> mutate(Country = factor(Country, levels = country_order))
+
+  p <- ggplot(df, aes(
+    x    = Country,
+    y    = Pct,
+    fill = Country,
+    text = paste0(Country, "\n",
+                  round(Pct, 1), "% da meta\n",
+                  round(YTD, 3), " / ", round(Target, 3), " tri")
+  )) +
+    geom_col(width = 0.55) +
+    geom_hline(yintercept = 100, linetype = "dashed",
+               color = "grey40", linewidth = 0.6) +
+    scale_fill_manual(values = country_colors, guide = "none") +
+    scale_y_continuous(
+      labels = label_percent(scale = 1, accuracy = 1),
+      expand = expansion(mult = c(0, 0.1))
+    ) +
+    labs(x = NULL, y = NULL,
+         subtitle = "Emissão acumulada 2026 como % da meta total anual") +
+    PLOT_THEME
+
+  ggplotly(p, tooltip = "text") |>
+    layout(margin = list(t = 40, b = 20))
+}
+
 # ── Debt as % of GDP — annual bar chart ─────────────────────
 # debt: pre-normalised data frame from load_* (Debt_tri, X_label, optionally Year/FY_start)
 # gdp:  country gdp data frame from load_* (PIB_tri, Periodo or FY)
@@ -2404,6 +2600,18 @@ ui <- page_navbar(
   nav_panel(
     "Visão Geral",
     card(
+      card_header("% da Meta Total Atingida — 2026"),
+      plotlyOutput("overview_meta_progress", height = "320px")
+    ),
+    card(
+      card_header("Saldo do Tesouro % da Mediana Histórica — 2026"),
+      plotlyOutput("overview_tsy_median", height = "380px")
+    ),
+    card(
+      card_header("Run-Rate 2026 % PIB — Comparativo (Mês Fiscal)"),
+      plotlyOutput("overview_runrate_pct", height = "380px")
+    ),
+    card(
       card_header("Emissões Mensais % PIB — Comparativo"),
       plotlyOutput("overview_monthly_pct", height = "380px")
     ),
@@ -2535,6 +2743,26 @@ server <- function(input, output, session) {
   })
 
   # ── Overview ───────────────────────────────────────────────
+  output$overview_meta_progress <- renderPlotly({
+    req(chile, mexico, sa, colombia)
+    chart_meta_progress(chile$lic, mexico$lic, sa$lic, colombia$lic)
+  })
+
+  output$overview_tsy_median <- renderPlotly({
+    req(chile, mexico, sa, colombia)
+    chart_tsy_median_overview(chile$tsy, mexico$tsy, sa$tsy, colombia$tsy)
+  })
+
+  output$overview_runrate_pct <- renderPlotly({
+    req(chile, mexico, sa, colombia)
+    chart_runrate_pct_gdp_overview(
+      chile$lic,    chile$gdp,
+      mexico$lic,   mexico$gdp,
+      sa$lic,       sa$gdp,
+      colombia$lic, colombia$gdp
+    )
+  })
+
   output$overview_monthly_pct <- renderPlotly({
     req(chile, mexico, sa, colombia)
     chart_monthly_pct_gdp_overview(
