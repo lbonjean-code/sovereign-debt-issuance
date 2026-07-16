@@ -738,7 +738,8 @@ chart_pct_gdp <- function(lic, gdp, country) {
 }
 
 # ── 4. Treasury cash balance — seasonal ─────────────────────
-chart_tsy_seasonal <- function(tsy, country, ccy_label) {
+chart_tsy_seasonal <- function(tsy, country, ccy_label, col = "Saldo") {
+  tsy    <- tsy |> mutate(Saldo = .data[[col]])
   cur_fy <- current_fy(country)
   lbl    <- month_labels(country)
   hist   <- tsy |> filter(FY < cur_fy)
@@ -776,7 +777,7 @@ chart_tsy_seasonal <- function(tsy, country, ccy_label) {
     scale_y_continuous(
       labels = label_number(suffix = paste0(" ", ccy_label), accuracy = 0.01)
     ) +
-    labs(subtitle = paste0("AF ", cur_fy, " vs. histórico — banda IQR 25–75% | Saldo Total (", ccy_label, ")")) +
+    labs(subtitle = paste0("AF ", cur_fy, " vs. histórico — banda IQR 25–75% | Saldo ", col, " (", ccy_label, ")")) +
     PLOT_THEME
 
   clean_legend(ggplotly(p, tooltip = c("x", "y", "colour", "fill"))) |>
@@ -784,13 +785,14 @@ chart_tsy_seasonal <- function(tsy, country, ccy_label) {
 }
 
 # ── 5. Treasury cash balance — time series ───────────────────
-chart_tsy_ts <- function(tsy, ccy_label) {
+chart_tsy_ts <- function(tsy, ccy_label, col = "Saldo") {
+  tsy <- tsy |> mutate(Saldo = .data[[col]])
   p <- ggplot(tsy, aes(x = Fecha, y = Saldo)) +
     geom_line(colour = CLR_CURRENT, linewidth = 1) +
     scale_y_continuous(
       labels = label_number(suffix = paste0(" ", ccy_label), accuracy = 0.01)
     ) +
-    labs(subtitle = paste0("Série histórica | Saldo Total (", ccy_label, ")")) +
+    labs(subtitle = paste0("Série histórica | Saldo ", col, " (", ccy_label, ")")) +
     PLOT_THEME
 
   ggplotly(p, tooltip = c("x", "y"))
@@ -1825,10 +1827,24 @@ ui <- page_navbar(
     ),
     layout_columns(
       col_widths = c(6, 6),
-      card(card_header("Caixa do Tesouro (Sazonal)"),
-           plotlyOutput("cl_tsy_seas", height = "320px")),
-      card(card_header("Caixa do Tesouro"),
-           plotlyOutput("cl_tsy_ts",   height = "320px"))
+      card(card_header("Caixa do Tesouro — Total (Sazonal)"),
+           plotlyOutput("cl_tsy_seas",       height = "320px")),
+      card(card_header("Caixa do Tesouro — Total"),
+           plotlyOutput("cl_tsy_ts",         height = "320px"))
+    ),
+    layout_columns(
+      col_widths = c(6, 6),
+      card(card_header("Caixa do Tesouro — Pesos (Sazonal)"),
+           plotlyOutput("cl_tsy_seas_pesos", height = "320px")),
+      card(card_header("Caixa do Tesouro — Pesos"),
+           plotlyOutput("cl_tsy_ts_pesos",   height = "320px"))
+    ),
+    layout_columns(
+      col_widths = c(6, 6),
+      card(card_header("Caixa do Tesouro — Dólares (Sazonal)"),
+           plotlyOutput("cl_tsy_seas_dolar", height = "320px")),
+      card(card_header("Caixa do Tesouro — Dólares"),
+           plotlyOutput("cl_tsy_ts_dolar",   height = "320px"))
     ),
     card(
       card_header("Emissões YTD"),
@@ -2145,6 +2161,10 @@ server <- function(input, output, session) {
   output$cl_vs_target   <- renderPlotly({ req(chile); chart_vs_target(chile$lic, TARGET_CHILE, "chile", "CLP tri", "2026") })
   output$cl_tsy_seas    <- renderPlotly({ req(chile); chart_tsy_seasonal(chile$tsy, "chile", "USD bi") })
   output$cl_tsy_ts      <- renderPlotly({ req(chile); chart_tsy_ts(chile$tsy, "USD bi") })
+  output$cl_tsy_seas_pesos <- renderPlotly({ req(chile); chart_tsy_seasonal(chile$tsy, "chile", "USD bi", col = "Pesos") })
+  output$cl_tsy_ts_pesos   <- renderPlotly({ req(chile); chart_tsy_ts(chile$tsy, "USD bi", col = "Pesos") })
+  output$cl_tsy_seas_dolar <- renderPlotly({ req(chile); chart_tsy_seasonal(chile$tsy, "chile", "USD bi", col = "Dolar") })
+  output$cl_tsy_ts_dolar   <- renderPlotly({ req(chile); chart_tsy_ts(chile$tsy, "USD bi", col = "Dolar") })
   output$cl_composition     <- renderPlotly({ req(chile); chart_composition(chile$lic, "chile", "CLP tri", "instrument") })
   output$cl_composition_ccy <- renderPlotly({ req(chile); chart_composition(chile$lic, "chile", "CLP tri", "currency") })
   output$cl_pre_pos         <- renderPlotly({ req(chile); chart_pre_pos(chile$lic, "chile") })
