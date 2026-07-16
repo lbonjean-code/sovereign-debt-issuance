@@ -143,7 +143,14 @@ load_chile <- function() {
     filter(Year >= 2005) |>
     arrange(Year)
 
-  list(lic = lic, tsy = tsy, gdp = gdp, gdp_usd = gdp_usd, debt = debt)
+  auction_det <- read_csv(path("chile_auction_details.csv"), show_col_types = FALSE) |>
+    mutate(
+      Fecha_Licitacion  = as.Date(Fecha_Licitacion),
+      Fecha_Vencimiento = as.Date(Fecha_Vencimiento)
+    )
+
+  list(lic = lic, tsy = tsy, gdp = gdp, gdp_usd = gdp_usd, debt = debt,
+       auction_det = auction_det)
 }
 
 # ── Mexico ───────────────────────────────────────────────────
@@ -2539,8 +2546,14 @@ chart_sa_btc <- function(det) {
 
   if (nrow(df) == 0) return(plotly_placeholder("Sem dados"))
 
+  med_btc <- median(df$BTC, na.rm = TRUE)
+
   p <- ggplot(df, aes(x = Fecha_Subasta, y = BTC, color = Bono, text = tooltip)) +
     geom_hline(yintercept = 1, linetype = "dashed", color = "#AAAAAA", linewidth = 0.4) +
+    geom_hline(yintercept = med_btc, linetype = "dashed", color = "#555555", linewidth = 0.6) +
+    annotate("text", x = min(df$Fecha_Subasta), y = med_btc,
+             label = paste0("Mediana: ", round(med_btc, 2), "x"),
+             hjust = 0, vjust = -0.5, size = 3, color = "#555555") +
     geom_line(linewidth = 0.35, alpha = 0.55) +
     geom_point(size = 1.8) +
     scale_x_date(date_labels = "%b %Y", date_breaks = "6 months") +
@@ -2559,37 +2572,27 @@ chart_sa_yield <- function(det) {
 
   cutoff <- Sys.Date() - 365 * 5
   df <- det |>
-    filter(!is.na(Tasa_Corte), !is.na(Mejor_Oferta),
-           !is.na(Monto_Asignado), Monto_Asignado > 0,
-           Tasa_Corte > 0, Mejor_Oferta > 0) |>
+    filter(!is.na(Tasa_Corte), !is.na(Monto_Asignado),
+           Monto_Asignado > 0, Tasa_Corte > 0) |>
     filter(Fecha_Subasta >= cutoff) |>
     group_by(Fecha_Subasta) |>
     summarise(
-      Yield_Corte  = weighted.mean(Tasa_Corte,   Monto_Asignado, na.rm = TRUE),
-      Melhor_Oferta = weighted.mean(Mejor_Oferta, Monto_Asignado, na.rm = TRUE),
+      Yield_Corte = weighted.mean(Tasa_Corte, Monto_Asignado, na.rm = TRUE),
       .groups = "drop"
     ) |>
     mutate(
-      NIP_bps = round((Yield_Corte - Melhor_Oferta) * 100, 1),
       tip_corte = paste0(format(Fecha_Subasta, "%d/%m/%Y"),
-                         "\nTaxa de Corte: ", round(Yield_Corte, 3), "%",
-                         "\nPrêmio s/ melhor oferta: ", NIP_bps, " bps"),
-      tip_melhor = paste0(format(Fecha_Subasta, "%d/%m/%Y"),
-                          "\nMelhor Oferta: ", round(Melhor_Oferta, 3), "%")
+                         "\nTaxa de Corte: ", round(Yield_Corte, 3), "%")
     )
 
   if (nrow(df) == 0) return(plotly_placeholder("Sem dados"))
 
-  CLR_CORTE  <- "#4472C4"
-  CLR_MELHOR <- "#ED7D31"
+  CLR_CORTE <- "#4472C4"
 
   plot_ly(df, x = ~Fecha_Subasta) |>
-    add_lines(y = ~Yield_Corte,   name = "Taxa de Corte",
+    add_lines(y = ~Yield_Corte, name = "Taxa de Corte",
               line = list(color = CLR_CORTE, width = 1.8),
               text = ~tip_corte, hoverinfo = "text") |>
-    add_lines(y = ~Melhor_Oferta, name = "Melhor Oferta (proxy mercado)",
-              line = list(color = CLR_MELHOR, width = 1.8, dash = "dot"),
-              text = ~tip_melhor, hoverinfo = "text") |>
     layout(
       xaxis  = list(title = "", tickformat = "%b %Y"),
       yaxis  = list(title = "Yield (%)", ticksuffix = "%"),
@@ -2597,6 +2600,127 @@ chart_sa_yield <- function(det) {
       annotations = list(list(
         x = 0, y = -0.22, xref = "paper", yref = "paper",
         text = "Yield médio ponderado por licitação — últimos 5 anos | Fonte: National Treasury",
+        showarrow = FALSE, xanchor = "left",
+        font = list(size = 9, color = "#888888")
+      ))
+    ) |>
+    config(displayModeBar = FALSE)
+}
+
+# ── Chile: bid-to-cover ratio over time ──────────────────────
+chart_cl_btc <- function(det) {
+  if (is.null(det) || nrow(det) == 0) return(plotly_placeholder("Dados de BTC não disponíveis"))
+
+  cutoff <- Sys.Date() - 365 * 5
+  df <- det |>
+    filter(!is.na(BTC), BTC > 0, BTC < 20) |>
+    group_by(Bono) |>
+    filter(max(Fecha_Licitacion) >= cutoff) |>
+    ungroup() |>
+    filter(Fecha_Licitacion >= cutoff) |>
+    mutate(
+      Tipo    = if_else(grepl("^BTU", Bono), "BTU", "BTP"),
+      tooltip = paste0(format(Fecha_Licitacion, "%d/%m/%Y"), "\n", Bono,
+                       "\nBTC: ", round(BTC, 2), "x",
+                       "\nMonto: CLP ", format(round(Monto_Asignado / 1e3, 0), big.mark = ","), "mm")
+    )
+
+  if (nrow(df) == 0) return(plotly_placeholder("Sem dados"))
+
+  med_btc <- median(df$BTC, na.rm = TRUE)
+
+  p <- ggplot(df, aes(x = Fecha_Licitacion, y = BTC, color = Tipo, text = tooltip)) +
+    geom_hline(yintercept = 1, linetype = "dashed", color = "#AAAAAA", linewidth = 0.4) +
+    geom_hline(yintercept = med_btc, linetype = "dashed", color = "#555555", linewidth = 0.6) +
+    annotate("text", x = min(df$Fecha_Licitacion), y = med_btc,
+             label = paste0("Mediana: ", round(med_btc, 2), "x"),
+             hjust = 0, vjust = -0.5, size = 3, color = "#555555") +
+    geom_line(linewidth = 0.35, alpha = 0.55) +
+    geom_point(size = 1.8) +
+    scale_x_date(date_labels = "%b %Y", date_breaks = "6 months") +
+    scale_y_continuous(labels = label_number(suffix = "x", accuracy = 0.1)) +
+    labs(subtitle = "Últimos 5 anos", x = NULL, y = "Bid-to-Cover") +
+    PLOT_THEME +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+  clean_legend(ggplotly(p, tooltip = "text")) |>
+    layout(legend = list(orientation = "h", y = -0.25))
+}
+
+# ── Chile: clearing yield over time (CLP vs UF) ──────────────
+chart_cl_yield <- function(det) {
+  if (is.null(det) || nrow(det) == 0) return(plotly_placeholder("Dados de yield não disponíveis"))
+
+  cutoff <- Sys.Date() - 365 * 5
+  df <- det |>
+    filter(!is.na(Tasa_Corte), !is.na(Monto_Asignado),
+           Monto_Asignado > 0, Tasa_Corte > 0,
+           Fecha_Licitacion >= cutoff) |>
+    group_by(Fecha_Licitacion, Moneda) |>
+    summarise(Yield_Corte = weighted.mean(Tasa_Corte, Monto_Asignado, na.rm = TRUE),
+              .groups = "drop") |>
+    mutate(tip = paste0(format(Fecha_Licitacion, "%d/%m/%Y"), "\n", Moneda,
+                        "\nTaxa de Corte: ", round(Yield_Corte, 3), "%"))
+
+  if (nrow(df) == 0) return(plotly_placeholder("Sem dados"))
+
+  df_clp <- filter(df, Moneda == "CLP")
+  df_uf  <- filter(df, Moneda == "UF")
+
+  plot_ly() |>
+    add_lines(data = df_clp, x = ~Fecha_Licitacion, y = ~Yield_Corte,
+              name = "CLP (nominal)", line = list(color = "#4472C4", width = 1.8),
+              text = ~tip, hoverinfo = "text") |>
+    add_lines(data = df_uf, x = ~Fecha_Licitacion, y = ~Yield_Corte,
+              name = "UF (real)", line = list(color = "#ED7D31", width = 1.8),
+              text = ~tip, hoverinfo = "text") |>
+    layout(
+      xaxis  = list(title = "", tickformat = "%b %Y"),
+      yaxis  = list(title = "Yield (%)", ticksuffix = "%"),
+      legend = list(orientation = "h", y = -0.2),
+      annotations = list(list(
+        x = 0, y = -0.22, xref = "paper", yref = "paper",
+        text = "Yield médio ponderado por licitação — últimos 5 anos | Fonte: Tesorería / Hacienda Chile",
+        showarrow = FALSE, xanchor = "left",
+        font = list(size = 9, color = "#888888")
+      ))
+    ) |>
+    config(displayModeBar = FALSE)
+}
+
+# ── Colombia: clearing yield over time (COP vs UVR) ──────────
+chart_co_yield <- function(lic) {
+  cutoff <- Sys.Date() - 365 * 5
+
+  df <- lic |>
+    filter(Tipo_Operacion == "SUBASTA",
+           !is.na(Tasa_Corte), !is.na(Monto), Monto > 0, Tasa_Corte > 0,
+           Fecha >= cutoff) |>
+    group_by(Fecha, Moneda) |>
+    summarise(Yield_Corte = weighted.mean(Tasa_Corte, Monto, na.rm = TRUE),
+              .groups = "drop") |>
+    mutate(tip = paste0(format(Fecha, "%d/%m/%Y"), "\n", Moneda,
+                        "\nTaxa de Corte: ", round(Yield_Corte, 3), "%"))
+
+  if (nrow(df) == 0) return(plotly_placeholder("Sem dados"))
+
+  df_cop <- filter(df, Moneda == "COP")
+  df_uvr <- filter(df, Moneda == "UVR")
+
+  plot_ly() |>
+    add_lines(data = df_cop, x = ~Fecha, y = ~Yield_Corte,
+              name = "COP (nominal)", line = list(color = "#4472C4", width = 1.8),
+              text = ~tip, hoverinfo = "text") |>
+    add_lines(data = df_uvr, x = ~Fecha, y = ~Yield_Corte,
+              name = "UVR (real)", line = list(color = "#ED7D31", width = 1.8),
+              text = ~tip, hoverinfo = "text") |>
+    layout(
+      xaxis = list(title = "", tickformat = "%b %Y"),
+      yaxis = list(title = "Yield (%)", ticksuffix = "%"),
+      legend = list(orientation = "h", y = -0.2),
+      annotations = list(list(
+        x = 0, y = -0.22, xref = "paper", yref = "paper",
+        text = "Yield médio ponderado por licitação (SUBASTA) — últimos 5 anos | Fonte: IRC / Ministerio de Hacienda",
         showarrow = FALSE, xanchor = "left",
         font = list(size = 9, color = "#888888")
       ))
@@ -2788,6 +2912,13 @@ ui <- page_navbar(
     ),
     layout_columns(
       col_widths = c(6, 6),
+      card(card_header("Bid-to-Cover"),
+           plotlyOutput("cl_btc",   height = "360px")),
+      card(card_header("Yield de Corte"),
+           plotlyOutput("cl_yield", height = "360px"))
+    ),
+    layout_columns(
+      col_widths = c(6, 6),
       card(card_header("Composição — Instrumento"),
            plotlyOutput("cl_composition",     height = "360px")),
       card(card_header("Composição — Moeda"),
@@ -2960,7 +3091,7 @@ ui <- page_navbar(
       col_widths = c(6, 6),
       card(card_header("Bid-to-Cover por Licitação"),
            plotlyOutput("sa_btc",   height = "360px")),
-      card(card_header("Yield de Corte vs. Melhor Oferta"),
+      card(card_header("Yield de Corte"),
            plotlyOutput("sa_yield", height = "360px"))
     ),
     layout_columns(
@@ -3042,6 +3173,10 @@ ui <- page_navbar(
     card(
       card_header("Emissões vs. Meta 2026"),
       plotlyOutput("co_vs_target", height = "320px")
+    ),
+    card(
+      card_header("Yield de Corte"),
+      plotlyOutput("co_yield", height = "360px")
     ),
     layout_columns(
       col_widths = c(6, 6),
@@ -3148,6 +3283,8 @@ server <- function(input, output, session) {
   output$cl_tsy_ts_pesos   <- renderPlotly({ req(chile); chart_tsy_ts(chile$tsy, "USD bi", col = "Pesos") })
   output$cl_tsy_seas_dolar <- renderPlotly({ req(chile); chart_tsy_seasonal(chile$tsy, "chile", "USD bi", col = "Dolar") })
   output$cl_tsy_ts_dolar   <- renderPlotly({ req(chile); chart_tsy_ts(chile$tsy, "USD bi", col = "Dolar") })
+  output$cl_btc             <- renderPlotly({ req(chile); chart_cl_btc(chile$auction_det) })
+  output$cl_yield           <- renderPlotly({ req(chile); chart_cl_yield(chile$auction_det) })
   output$cl_composition     <- renderPlotly({ req(chile); chart_composition(chile$lic, "chile", "CLP tri", "instrument") })
   output$cl_composition_ccy <- renderPlotly({ req(chile); chart_composition(chile$lic, "chile", "CLP tri", "currency") })
   output$cl_pre_pos         <- renderPlotly({ req(chile); chart_pre_pos(chile$lic, "chile") })
@@ -3201,6 +3338,7 @@ server <- function(input, output, session) {
   output$sa_yield           <- renderPlotly({ req(sa); chart_sa_yield(sa$auction_det) })
 
   # ── Colombia ───────────────────────────────────────────────
+  output$co_yield        <- renderPlotly({ req(colombia); chart_co_yield(colombia$lic) })
   output$co_monthly      <- renderPlotly({ req(colombia); n <- if (isTRUE(input$co_monthly_all)) NULL else 24L; chart_monthly(colombia$lic, "colombia", "COP tri", n_months = n) })
   output$co_monthly_pct  <- renderPlotly({ req(colombia); n <- if (isTRUE(input$co_monthly_all)) NULL else 24L; chart_monthly_pct_gdp(colombia$lic, colombia$gdp, "colombia", "COP tri", n_months = n) })
   output$co_ytd          <- renderPlotly({ req(colombia); chart_ytd(colombia$lic, "colombia", "COP tri") })
