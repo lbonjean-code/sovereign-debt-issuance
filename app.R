@@ -1275,6 +1275,167 @@ chart_pre_pos_overview <- function(chile_lic, mexico_lic, sa_lic, colombia_lic) 
     )
 }
 
+# ── Overview: monthly issuance % PIB — 4-country line chart ──
+chart_monthly_pct_gdp_overview <- function(
+    chile_lic, chile_gdp, mx_lic, mx_gdp,
+    sa_lic, sa_gdp, co_lic, co_gdp,
+    n_months = 24L) {
+
+  today      <- Sys.Date()
+  start_date <- floor_date(today %m-% months(n_months - 1L), "month")
+
+  gdp_locf <- function(d, gdp_pts) {
+    idx <- which(gdp_pts$Periodo <= d & !is.na(gdp_pts$PIB_tri))
+    if (length(idx) == 0) NA_real_ else gdp_pts$PIB_tri[max(idx)]
+  }
+
+  get_monthly_pct <- function(lic, gdp, label) {
+    gdp_pts <- gdp |> arrange(Periodo)
+    lic |>
+      filter(Fecha >= start_date, Fecha <= today) |>
+      mutate(Mes_Date = floor_date(Fecha, "month")) |>
+      group_by(Mes_Date) |>
+      summarise(Monto = sum(Monto, na.rm = TRUE), .groups = "drop") |>
+      mutate(
+        PIB_tri = sapply(Mes_Date, gdp_locf, gdp_pts = gdp_pts),
+        Pct     = Monto / PIB_tri * 100,
+        Country = label
+      ) |>
+      filter(!is.na(Pct))
+  }
+
+  df <- bind_rows(
+    get_monthly_pct(chile_lic, chile_gdp, "Chile"),
+    get_monthly_pct(mx_lic,    mx_gdp,    "México"),
+    get_monthly_pct(sa_lic,    sa_gdp,    "África do Sul"),
+    get_monthly_pct(co_lic,    co_gdp,    "Colômbia")
+  )
+
+  if (nrow(df) == 0) return(plotly_placeholder())
+
+  country_colors <- c(
+    "Chile"         = "#4472C4",
+    "México"        = "#70AD47",
+    "África do Sul" = "#ED7D31",
+    "Colômbia"      = "#7030A0"
+  )
+
+  span_months <- as.numeric(difftime(today, start_date, units = "days")) / 30
+  x_breaks <- if (span_months > 60) "2 years" else if (span_months > 30) "6 months" else "2 months"
+  x_labels <- if (span_months > 60) "%Y" else "%b %Y"
+
+  p <- ggplot(df, aes(
+    x     = Mes_Date,
+    y     = Pct,
+    color = Country,
+    group = Country,
+    text  = paste0(Country, "\n", format(Mes_Date, "%b %Y"), ": ",
+                   round(Pct, 3), "% do PIB")
+  )) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2) +
+    scale_color_manual(values = country_colors, name = NULL) +
+    scale_x_date(date_breaks = x_breaks, date_labels = x_labels,
+                 expand = expansion(add = 15)) +
+    scale_y_continuous(
+      labels = label_percent(scale = 1, accuracy = 0.01),
+      expand = expansion(mult = c(0, 0.1))
+    ) +
+    labs(subtitle = paste0(
+      format(start_date, "%b %Y"), " — ", format(floor_date(today, "month"), "%b %Y"),
+      " | PIB acumulado 12 meses"
+    )) +
+    PLOT_THEME +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+  ggplotly(p, tooltip = "text") |>
+    layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
+}
+
+# ── Overview: YTD issuance % PIB — 4-country line chart ──────
+chart_ytd_pct_gdp_overview <- function(
+    chile_lic, chile_gdp, mx_lic, mx_gdp,
+    sa_lic, sa_gdp, co_lic, co_gdp) {
+
+  today <- Sys.Date()
+
+  country_colors <- c(
+    "Chile"         = "#4472C4",
+    "México"        = "#70AD47",
+    "África do Sul" = "#ED7D31",
+    "Colômbia"      = "#7030A0"
+  )
+
+  get_ytd_pct <- function(lic, gdp, country, label) {
+    fy_start_str   <- if (country == "south_africa") "-04-01" else "-01-01"
+    cur_fy         <- current_fy(country)
+    today_fy_start <- as.Date(paste0(cur_fy, fy_start_str))
+    today_doy      <- as.numeric(today - today_fy_start)
+
+    ytd <- lic |>
+      mutate(auction_doy = as.numeric(Fecha - as.Date(paste0(FY, fy_start_str)))) |>
+      filter(auction_doy >= 0, auction_doy <= today_doy) |>
+      group_by(FY) |>
+      summarise(Monto = sum(Monto, na.rm = TRUE), .groups = "drop")
+
+    if (nrow(ytd) == 0) return(NULL)
+
+    gdp_pts <- gdp |> filter(!is.na(PIB_tri)) |> arrange(Periodo)
+
+    gdp_by_fy <- do.call(rbind, lapply(ytd$FY, function(fy) {
+      fy_today   <- as.Date(paste0(fy, fy_start_str)) + today_doy
+      candidates <- gdp_pts$PIB_tri[gdp_pts$Periodo <= fy_today]
+      if (length(candidates) == 0) return(NULL)
+      data.frame(FY = fy, PIB_tri = tail(candidates, 1))
+    }))
+
+    if (is.null(gdp_by_fy) || nrow(gdp_by_fy) == 0) return(NULL)
+
+    ytd |>
+      left_join(gdp_by_fy, by = "FY") |>
+      filter(!is.na(PIB_tri)) |>
+      mutate(
+        Pct      = Monto / PIB_tri * 100,
+        Country  = label,
+        FY_label = sapply(FY, fmt_fy, country = country)
+      )
+  }
+
+  df <- bind_rows(
+    get_ytd_pct(chile_lic, chile_gdp, "chile",         "Chile"),
+    get_ytd_pct(mx_lic,    mx_gdp,    "mexico",        "México"),
+    get_ytd_pct(sa_lic,    sa_gdp,    "south_africa",  "África do Sul"),
+    get_ytd_pct(co_lic,    co_gdp,    "colombia",      "Colômbia")
+  )
+
+  if (is.null(df) || nrow(df) == 0) return(plotly_placeholder())
+
+  p <- ggplot(df, aes(
+    x     = FY,
+    y     = Pct,
+    color = Country,
+    group = Country,
+    text  = paste0(Country, " — ", FY_label, "\n", round(Pct, 2), "% do PIB")
+  )) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2.5) +
+    scale_color_manual(values = country_colors, name = NULL) +
+    scale_x_continuous(breaks = function(x) seq(floor(min(x)), ceiling(max(x)), by = 1)) +
+    scale_y_continuous(
+      labels = label_percent(scale = 1, accuracy = 0.01),
+      expand = expansion(mult = c(0, 0.1))
+    ) +
+    labs(subtitle = paste0(
+      "Mesmo período do ano fiscal (YTD até ", format(today, "%d %b"),
+      ") | PIB acumulado 12 meses"
+    )) +
+    PLOT_THEME +
+    theme(axis.text.x = element_text(angle = 30, hjust = 1))
+
+  ggplotly(p, tooltip = "text") |>
+    layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
+}
+
 # ── Debt as % of GDP — annual bar chart ─────────────────────
 # debt: pre-normalised data frame from load_* (Debt_tri, X_label, optionally Year/FY_start)
 # gdp:  country gdp data frame from load_* (PIB_tri, Periodo or FY)
@@ -2243,6 +2404,14 @@ ui <- page_navbar(
   nav_panel(
     "Visão Geral",
     card(
+      card_header("Emissões Mensais % PIB — Comparativo"),
+      plotlyOutput("overview_monthly_pct", height = "380px")
+    ),
+    card(
+      card_header("Emissões YTD % PIB — Comparativo"),
+      plotlyOutput("overview_ytd_pct", height = "380px")
+    ),
+    card(
       card_header("Pré vs. Pós — Composição YTD por País"),
       plotlyOutput("overview_pre_pos", height = "420px")
     )
@@ -2366,6 +2535,26 @@ server <- function(input, output, session) {
   })
 
   # ── Overview ───────────────────────────────────────────────
+  output$overview_monthly_pct <- renderPlotly({
+    req(chile, mexico, sa, colombia)
+    chart_monthly_pct_gdp_overview(
+      chile$lic,    chile$gdp,
+      mexico$lic,   mexico$gdp,
+      sa$lic,       sa$gdp,
+      colombia$lic, colombia$gdp
+    )
+  })
+
+  output$overview_ytd_pct <- renderPlotly({
+    req(chile, mexico, sa, colombia)
+    chart_ytd_pct_gdp_overview(
+      chile$lic,    chile$gdp,
+      mexico$lic,   mexico$gdp,
+      sa$lic,       sa$gdp,
+      colombia$lic, colombia$gdp
+    )
+  })
+
   output$overview_pre_pos <- renderPlotly({
     req(chile, mexico, sa, colombia)
     chart_pre_pos_overview(chile$lic, mexico$lic, sa$lic, colombia$lic)
