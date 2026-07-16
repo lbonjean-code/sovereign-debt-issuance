@@ -32,6 +32,7 @@ CLR_HIST    <- "#BBBBBB"
 CLR_MED     <- "#555555"
 CLR_PRE     <- "#4472C4"   # fixed rate (Pré)
 CLR_POS     <- "#FFC000"   # floating rate (Pós)
+CLR_EP      <- "#ED7D31"   # Entidades Públicas (Colombia direct placements)
 
 # Donut chart: shared semantic colors across countries
 DONUT_COLORS <- c(
@@ -51,7 +52,8 @@ DONUT_COLORS <- c(
   "FRN"              = "#FFC000",  # SA floating rate (= Bondes)
   "ZAR"              = "#AAAAAA",  # SA nominal ZAR grouping
   "COP"              = "#90C987",  # Colombia nominal peso
-  "UVR"              = "#5B9BD5"   # Colombia inflation-linked
+  "UVR"              = "#5B9BD5",  # Colombia inflation-linked
+  "Entidades Públicas" = "#ED7D31" # Colombia direct placements (non-auction)
 )
 
 plotly_placeholder <- function(msg = "Em breve") {
@@ -268,6 +270,27 @@ load_colombia <- function() {
     ) |>
     filter(Fecha >= as.Date("2000-01-01"), Fecha <= Sys.Date())
 
+  # Entidades Públicas: direct/negotiated placements outside the auction mechanism
+  ep <- tryCatch({
+    read_csv(path("colombia_entidades_publicas.csv"), show_col_types = FALSE) |>
+      filter(!is.na(Fecha), !is.na(Entidades_Publicas)) |>
+      mutate(
+        Fecha      = floor_date(as.Date(Fecha), "month"),
+        Monto      = Entidades_Publicas / 1e3,   # miles de millones COP → trillones
+        Tipo       = "Entidades Públicas",
+        Moneda     = "COP",
+        FY         = year(Fecha),
+        Mes_Fiscal = month(Fecha)
+      ) |>
+      filter(Fecha >= as.Date("2000-01-01"), Fecha <= Sys.Date()) |>
+      select(Fecha, Monto, Tipo, Moneda, FY, Mes_Fiscal)
+  }, error = function(e) NULL)
+
+  if (!is.null(ep) && nrow(ep) > 0) lic <- bind_rows(lic, ep)
+
+  # Explicit stacking order: CP (bottom), LP (middle), Entidades Públicas (top)
+  lic <- lic |> mutate(Tipo = factor(Tipo, levels = c("CP", "LP", "Entidades Públicas")))
+
   tsy <- read_csv(path("colombia_treasury.csv"), show_col_types = FALSE) |>
     mutate(
       Fecha      = as.Date(Periodo),
@@ -322,6 +345,12 @@ TARGET_CHILE <- data.frame(
 TARGET_SA <- data.frame(
   Categoria = c("Total", "Treasury Bills", "Long-term"),
   Target    = c(1.853, 1.610, 0.243),
+  stringsAsFactors = FALSE
+)
+
+TARGET_COLOMBIA <- data.frame(
+  Categoria = c("TES Longo Prazo", "Entidades Públicas", "Diretas (Longo Prazo)", "TCO + FEPC"),
+  Target    = c(57, 20, 9, 67),
   stringsAsFactors = FALSE
 )
 
@@ -442,7 +471,7 @@ chart_ytd <- function(lic, country, ccy_label) {
           text = paste0(FY, "\nTotal: ", round(Total, 3), " ", ccy_label)),
       size = 4, inherit.aes = FALSE
     ) +
-    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP)) +
+    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP, "Entidades Públicas" = CLR_EP)) +
     scale_colour_manual(values = c(Total = CLR_TOTAL)) +
     scale_y_continuous(
       labels = label_number(suffix = paste0(" ", ccy_label), accuracy = 0.01),
@@ -506,7 +535,7 @@ chart_monthly <- function(lic, country, ccy_label, n_months = 24L) {
           text = paste0(format(Mes_Date, "%b %Y"), "\nTotal: ", round(Total, 3), " ", ccy_label)),
       size = 2.2, inherit.aes = FALSE
     ) +
-    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP)) +
+    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP, "Entidades Públicas" = CLR_EP)) +
     scale_colour_manual(values = c(Total = CLR_TOTAL)) +
     scale_x_date(
       date_breaks = x_breaks,
@@ -597,7 +626,7 @@ chart_monthly_pct_gdp <- function(lic, gdp, country, ccy_label, n_months = 24L) 
                         round(Total_Pct, 3), "% do PIB")),
       size = 2.2, inherit.aes = FALSE
     ) +
-    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP)) +
+    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP, "Entidades Públicas" = CLR_EP)) +
     scale_colour_manual(values = c(Total = CLR_TOTAL)) +
     scale_x_date(
       date_breaks = x_breaks,
@@ -674,7 +703,7 @@ chart_ytd_pct_gdp <- function(lic, gdp, country, ccy_label) {
           text = paste0(FY, "\nTotal: ", round(Total_Pct, 2), "% do PIB")),
       size = 4, inherit.aes = FALSE
     ) +
-    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP)) +
+    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP, "Entidades Públicas" = CLR_EP)) +
     scale_colour_manual(values = c(Total = CLR_TOTAL)) +
     scale_y_continuous(
       labels = label_percent(scale = 1, accuracy = 0.01),
@@ -745,7 +774,7 @@ chart_pct_gdp <- function(lic, gdp, country) {
           text = paste0(FY, " (", Periodo, ")\nTotal: ", round(Total_Pct, 1), "% do PIB")),
       size = 4, inherit.aes = FALSE
     ) +
-    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP)) +
+    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP, "Entidades Públicas" = CLR_EP)) +
     scale_colour_manual(values = c(Total = CLR_CURRENT)) +
     scale_y_continuous(
       labels = label_percent(scale = 1, accuracy = 0.1),
@@ -1054,7 +1083,7 @@ chart_composition <- function(lic, country, ccy_label, dimension = "instrument")
   df <- df |>
     mutate(Total = sum(Monto), Pct = Monto / Total * 100)
 
-  clrs <- DONUT_COLORS[df$Categoria]
+  clrs <- DONUT_COLORS[as.character(df$Categoria)]
   clrs[is.na(clrs)] <- "#CCCCCC"
 
   plot_ly(
@@ -1790,6 +1819,18 @@ chart_vs_target <- function(lic, targets, country, ccy_label, year_label) {
       cat_lic
     )
 
+  } else if (country == "colombia") {
+    emitted <- cur_lic |>
+      mutate(Categoria = case_when(
+        as.character(Tipo) == "LP"                  ~ "TES Longo Prazo",
+        as.character(Tipo) == "Entidades Públicas"  ~ "Entidades Públicas",
+        as.character(Tipo) == "CP"                  ~ "TCO + FEPC",
+        TRUE                                        ~ NA_character_
+      )) |>
+      filter(!is.na(Categoria)) |>
+      group_by(Categoria) |>
+      summarise(Emitido = sum(Monto, na.rm = TRUE), .groups = "drop")
+
   } else {
     # Chile: same emitted value shown against both targets
     total_emitted <- sum(cur_lic$Monto, na.rm = TRUE)
@@ -2282,7 +2323,7 @@ server <- function(input, output, session) {
   output$co_runrate_pct  <- renderPlotly({ req(colombia); chart_runrate_pct_gdp(colombia$lic, colombia$gdp, "colombia") })
   output$co_tsy_seas     <- renderPlotly({ req(colombia); chart_tsy_seasonal(colombia$tsy, "colombia", "COP tri") })
   output$co_tsy_ts       <- renderPlotly({ req(colombia); chart_tsy_ts(colombia$tsy, "COP tri") })
-  output$co_vs_target    <- renderPlotly({ plotly_placeholder("Plano de financiamento 2026 em breve") })
+  output$co_vs_target    <- renderPlotly({ req(colombia); chart_vs_target(colombia$lic, TARGET_COLOMBIA, "colombia", "COP tri", "2026") |> layout(legend = list(orientation = "h", y = -0.45), margin = list(b = 120)) })
   output$co_composition     <- renderPlotly({ req(colombia); chart_composition(colombia$lic, "colombia", "COP tri", "instrument") })
   output$co_composition_ccy <- renderPlotly({ req(colombia); chart_composition(colombia$lic, "colombia", "COP tri", "currency") })
   output$co_pre_pos         <- renderPlotly({ req(colombia); chart_pre_pos(colombia$lic, "colombia") })
