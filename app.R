@@ -1565,6 +1565,232 @@ chart_tsy_median_overview <- function(chile_tsy, mx_tsy, sa_tsy, co_tsy) {
     layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
 }
 
+# ── Overview: Summary table with per-row green heatmap ───────
+build_summary_table <- function(chile, mexico, sa, colombia) {
+  today <- Sys.Date()
+
+  # YTD lic for current FY
+  get_ytd <- function(lic, country) {
+    cur_fy <- current_fy(country)
+    fs     <- if (country == "south_africa") "-04-01" else "-01-01"
+    lic |> filter(FY == cur_fy, Fecha >= as.Date(paste0(cur_fy, fs)), Fecha <= today)
+  }
+
+  tipo_pct <- function(lic, country, tipo) {
+    df  <- get_ytd(lic, country)
+    tot <- sum(df$Monto, na.rm = TRUE)
+    if (tot == 0) return(NA_real_)
+    sum(df$Monto[as.character(df$Tipo) == tipo], na.rm = TRUE) / tot * 100
+  }
+
+  prepos_pct <- function(lic, country, pp) {
+    df  <- classify_pre_pos(get_ytd(lic, country), country) |> filter(!is.na(PrePos))
+    tot <- sum(df$Monto, na.rm = TRUE)
+    if (tot == 0) return(NA_real_)
+    sum(df$Monto[df$PrePos == pp], na.rm = TRUE) / tot * 100
+  }
+
+  il_pct <- function(lic, country, want_il) {
+    df  <- get_ytd(lic, country)
+    tot <- sum(df$Monto, na.rm = TRUE)
+    if (tot == 0) return(NA_real_)
+    is_il <- switch(country,
+      chile        = !is.na(df$Moneda) & df$Moneda == "UF",
+      mexico       = grepl("Udibono", df$Instrumento, ignore.case = TRUE),
+      south_africa = df$Tipo_Bono == "Inflation-Linked",
+      colombia     = !is.na(df$Moneda) & df$Moneda == "UVR"
+    )
+    pct_il <- sum(df$Monto[is_il], na.rm = TRUE) / tot * 100
+    if (want_il) pct_il else 100 - pct_il
+  }
+
+  get_avg_mat <- function(avg_mat, country) {
+    if (is.null(avg_mat) || nrow(avg_mat) == 0) return(NA_real_)
+    if (country == "mexico") {
+      cur_yr <- year(today)
+      obs    <- avg_mat |> filter(year(Periodo) == cur_yr) |> slice_max(Periodo, n = 1)
+      if (nrow(obs) == 0) obs <- avg_mat |> slice_max(Periodo, n = 1)
+      obs$Anos[1]
+    } else if (country == "south_africa") {
+      tail(avg_mat, 1)$WAM_Anos
+    } else if (country == "colombia") {
+      avg_mat$Vida_Media[1]
+    } else {
+      NA_real_
+    }
+  }
+
+  debt_pct <- function(debt, want_ext) {
+    if (is.null(debt) || nrow(debt) == 0) return(NA_real_)
+    last <- tail(debt, 1)
+    if (is.na(last$Debt_tri) || last$Debt_tri == 0) return(NA_real_)
+    if (want_ext) last$Ext_tri / last$Debt_tri * 100
+    else          last$Int_tri / last$Debt_tri * 100
+  }
+
+  get_h <- function(holdings, country) {
+    na_out <- list(pensions = NA_real_, external = NA_real_, other = NA_real_)
+    if (is.null(holdings) || nrow(holdings) == 0) return(na_out)
+    if (country == "south_africa") {
+      obs      <- holdings |> slice_max(Periodo, n = 1, with_ties = FALSE)
+      pensions <- obs$Local_Pension_Funds * 100
+      external <- obs$Non_Residents       * 100
+      list(pensions = pensions, external = external, other = 100 - pensions - external)
+    } else if (country == "mexico") {
+      obs <- holdings |>
+        mutate(YM = floor_date(Periodo, "month")) |>
+        group_by(YM) |> slice_max(Periodo, n = 1) |> ungroup() |>
+        slice_max(YM, n = 1, with_ties = FALSE)
+      pensions <- obs$Siefores              / obs$Total * 100
+      external <- obs$Residentes_Extranjero / obs$Total * 100
+      list(pensions = pensions, external = external, other = 100 - pensions - external)
+    } else if (country == "colombia") {
+      latest <- holdings |> filter(!is.na(Periodo)) |> pull(Periodo) |> max(na.rm = TRUE)
+      obs <- holdings |>
+        filter(Periodo == latest) |>
+        mutate(Sector = case_when(
+          grepl("Capital Extranjero|Extranjero", Entidad, ignore.case = TRUE) ~ "external",
+          grepl("Pensiones|Cesantias|Prima Media", Entidad, ignore.case = TRUE) ~ "pensions",
+          TRUE ~ "other"
+        )) |>
+        group_by(Sector) |> summarise(Valor = sum(Valor, na.rm = TRUE), .groups = "drop")
+      tot  <- sum(obs$Valor)
+      gpct <- function(s) { v <- obs$Valor[obs$Sector == s]; if (length(v) == 0) 0 else v / tot * 100 }
+      list(pensions = gpct("pensions"), external = gpct("external"), other = gpct("other"))
+    } else {
+      na_out
+    }
+  }
+
+  cl_h <- get_h(NULL,              "chile")
+  mx_h <- get_h(mexico$holdings,   "mexico")
+  sa_h <- get_h(sa$holdings,       "south_africa")
+  co_h <- get_h(colombia$holdings, "colombia")
+
+  fmt_anos <- function(x) if (is.na(x)) "—" else paste0(round(x, 1), " a")
+
+  # Debt labels: MX = Net, others = Gross
+  debt_grp_label <- "Dívida (Bruta/Líquida MX)"
+
+  rows <- list(
+    list(group = "Prazo Médio Ponderado",  label = "Duração (anos)",
+         fmt_fn = fmt_anos,
+         vals = c(
+           get_avg_mat(NULL,                "chile"),
+           get_avg_mat(mexico$avg_maturity, "mexico"),
+           get_avg_mat(sa$avg_maturity,     "south_africa"),
+           get_avg_mat(colombia$avg_maturity, "colombia"))),
+    list(group = "Instrumento",            label = "CP",               vals = c(
+      tipo_pct(chile$lic, "chile", "CP"),
+      tipo_pct(mexico$lic, "mexico", "CP"),
+      tipo_pct(sa$lic, "south_africa", "CP"),
+      tipo_pct(colombia$lic, "colombia", "CP"))),
+    list(group = NULL,                     label = "LP",               vals = c(
+      tipo_pct(chile$lic, "chile", "LP"),
+      tipo_pct(mexico$lic, "mexico", "LP"),
+      tipo_pct(sa$lic, "south_africa", "LP"),
+      tipo_pct(colombia$lic, "colombia", "LP"))),
+    list(group = NULL,                     label = "Entidades Públicas", vals = c(
+      NA, NA, NA,
+      tipo_pct(colombia$lic, "colombia", "Entidades Públicas"))),
+    list(group = "Pré vs. Pós",           label = "Pré",              vals = c(
+      prepos_pct(chile$lic, "chile", "Pré"),
+      prepos_pct(mexico$lic, "mexico", "Pré"),
+      prepos_pct(sa$lic, "south_africa", "Pré"),
+      prepos_pct(colombia$lic, "colombia", "Pré"))),
+    list(group = NULL,                     label = "Pós",              vals = c(
+      prepos_pct(chile$lic, "chile", "Pós"),
+      prepos_pct(mexico$lic, "mexico", "Pós"),
+      prepos_pct(sa$lic, "south_africa", "Pós"),
+      prepos_pct(colombia$lic, "colombia", "Pós"))),
+    list(group = "Nominal vs. Inflação",  label = "Nominal",          vals = c(
+      il_pct(chile$lic, "chile", FALSE),
+      il_pct(mexico$lic, "mexico", FALSE),
+      il_pct(sa$lic, "south_africa", FALSE),
+      il_pct(colombia$lic, "colombia", FALSE))),
+    list(group = NULL,                     label = "Inflation-Linked", vals = c(
+      il_pct(chile$lic, "chile", TRUE),
+      il_pct(mexico$lic, "mexico", TRUE),
+      il_pct(sa$lic, "south_africa", TRUE),
+      il_pct(colombia$lic, "colombia", TRUE))),
+    list(group = debt_grp_label,          label = "Interna %",        vals = c(
+      debt_pct(chile$debt,    FALSE),
+      debt_pct(mexico$debt,   FALSE),
+      debt_pct(sa$debt,       FALSE),
+      debt_pct(colombia$debt, FALSE))),
+    list(group = NULL,                     label = "Externa %",        vals = c(
+      debt_pct(chile$debt,    TRUE),
+      debt_pct(mexico$debt,   TRUE),
+      debt_pct(sa$debt,       TRUE),
+      debt_pct(colombia$debt, TRUE))),
+    list(group = "Detentores",             label = "Pensões",          vals = c(cl_h$pensions, mx_h$pensions, sa_h$pensions, co_h$pensions)),
+    list(group = NULL,                     label = "Externo",          vals = c(cl_h$external, mx_h$external, sa_h$external, co_h$external)),
+    list(group = NULL,                     label = "Outros",           vals = c(cl_h$other,    mx_h$other,    sa_h$other,    co_h$other))
+  )
+
+  # Rank-based 4 shades: rank 1 (highest) = darkest green, rank 4 = white
+  SHADES <- c("#1A7A1A", "#5CBF5C", "#B5D9B5", "#FFFFFF")
+  row_colors <- function(vals) {
+    clrs   <- rep("#FFFFFF", length(vals))
+    non_na <- which(!is.na(vals))
+    if (length(non_na) == 0) return(clrs)
+    rnks            <- rank(-vals[non_na], ties.method = "min")
+    clrs[non_na]    <- SHADES[pmin(rnks, 4L)]
+    clrs
+  }
+
+  fmt <- function(x) if (is.na(x)) "—" else paste0(round(x, 1), "%")
+
+  th_style   <- "padding:8px 14px; font-size:0.88em; font-weight:600; border-bottom:2px solid #ccc; text-align:center"
+  th_l_style <- paste0(th_style, "; text-align:left")
+  grp_style  <- "background:#f4f4f4; font-size:0.78em; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; color:#666; padding:6px 12px"
+  lbl_style  <- "padding:6px 12px 6px 20px; white-space:nowrap"
+  td_base    <- "padding:6px 14px; font-size:0.88em; font-variant-numeric:tabular-nums; text-align:center"
+
+  header <- tags$thead(
+    tags$tr(
+      tags$th("Indicador",      style = th_l_style),
+      tags$th("Chile",          style = th_style),
+      tags$th("México",         style = th_style),
+      tags$th("África do Sul",  style = th_style),
+      tags$th("Colômbia",       style = th_style)
+    )
+  )
+
+  all_trs <- unlist(lapply(rows, function(r) {
+    clrs     <- row_colors(r$vals)
+    row_fmt  <- if (!is.null(r$fmt_fn)) r$fmt_fn else fmt
+    cells    <- Map(function(v, clr) {
+      tags$td(row_fmt(v), style = paste0(td_base, "; background:", clr))
+    }, r$vals, clrs)
+    data_row <- do.call(tags$tr, c(list(tags$td(r$label, style = lbl_style)), cells))
+    if (!is.null(r$group)) {
+      list(
+        tags$tr(tags$td(r$group, colspan = "5", style = grp_style)),
+        data_row
+      )
+    } else {
+      list(data_row)
+    }
+  }), recursive = FALSE)
+
+  tbl <- tags$table(
+    style = "width:100%; border-collapse:collapse",
+    header,
+    do.call(tags$tbody, all_trs)
+  )
+
+  tags$div(
+    tags$p(
+      style = "font-size:0.78em; color:#888; margin-bottom:6px",
+      paste0("Emissões: YTD ", year(today), " (ano fiscal corrente). ",
+             "Dívida: ano mais recente disponível. ",
+             "Detentores: observação mais recente disponível.")
+    ),
+    tbl
+  )
+}
+
 # ── Overview: % da Meta Total atingida por país ──────────────
 chart_meta_progress <- function(chile_lic, mx_lic, sa_lic, co_lic) {
 
@@ -2622,6 +2848,10 @@ ui <- page_navbar(
     card(
       card_header("Pré vs. Pós — Composição YTD por País"),
       plotlyOutput("overview_pre_pos", height = "420px")
+    ),
+    card(
+      card_header("Tabela Resumo — Comparativo por País (% YTD 2026)"),
+      uiOutput("overview_summary_table")
     )
   ),
 
@@ -2786,6 +3016,11 @@ server <- function(input, output, session) {
   output$overview_pre_pos <- renderPlotly({
     req(chile, mexico, sa, colombia)
     chart_pre_pos_overview(chile$lic, mexico$lic, sa$lic, colombia$lic)
+  })
+
+  output$overview_summary_table <- renderUI({
+    req(chile, mexico, sa, colombia)
+    build_summary_table(chile, mexico, sa, colombia)
   })
 }
 
