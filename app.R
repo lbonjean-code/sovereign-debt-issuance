@@ -116,7 +116,11 @@ load_chile <- function() {
                            Monto * UF_CLP,
                            Monto),
       Monto      = Monto / 1e6,
-      Tipo       = case_when(Tenor == "CP" ~ "CP", Tenor == "LP" ~ "LP", TRUE ~ "LP"),
+      # Classify by remaining maturity at auction — the source CSV `Tenor`
+      # column mislabels reopenings of long bonds (5–6.5y) as "CP".
+      Tipo       = if_else(!is.na(Madurez) &
+                             as.numeric(as.Date(Madurez) - Fecha) < 365,
+                           "CP", "LP"),
       FY         = fy_chile(Fecha),
       Mes_Fiscal = month(Fecha)
     ) |>
