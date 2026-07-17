@@ -166,8 +166,12 @@ load_chile <- function() {
   holdings <- read_csv(path("chile_holdings.csv"), show_col_types = FALSE) |>
     mutate(Periodo = as.Date(Periodo))
 
+  maturity_clp <- read_csv(path("chile_maturity_clp.csv"), show_col_types = FALSE)
+  maturity_usd <- read_csv(path("chile_maturity_usd.csv"), show_col_types = FALSE)
+
   list(lic = lic, tsy = tsy, gdp = gdp, gdp_usd = gdp_usd, debt = debt,
-       auction_det = auction_det, holdings = holdings)
+       auction_det = auction_det, holdings = holdings,
+       maturity_clp = maturity_clp, maturity_usd = maturity_usd)
 }
 
 # ── Mexico ───────────────────────────────────────────────────
@@ -2513,6 +2517,68 @@ chart_mexico_avg_maturity <- function(avg_maturity) {
     layout(margin = list(b = 60))
 }
 
+# ── Chile: debt maturity profile — CLP (principal only) ───────
+chart_cl_maturity_clp <- function(maturity) {
+  if (is.null(maturity) || nrow(maturity) == 0) return(plotly_placeholder())
+
+  df <- maturity |>
+    filter(Principal > 0) |>
+    arrange(Year) |>
+    mutate(
+      CLP_tri = Principal / 1e12,
+      Ano     = factor(Year, levels = Year),
+      lbl     = round(CLP_tri, 1)
+    )
+
+  if (nrow(df) == 0) return(plotly_placeholder())
+
+  p <- ggplot(df, aes(x = Ano, y = CLP_tri,
+                      text = paste0(Year, ": ", round(CLP_tri, 2), " CLP tri"))) +
+    geom_col(fill = "#4472C4", width = 0.7) +
+    geom_text(aes(label = lbl), vjust = -0.5, size = 2.8, color = "#333333") +
+    scale_y_continuous(
+      labels = label_number(suffix = " CLP tri", accuracy = 0.1),
+      expand = expansion(mult = c(0, 0.12))
+    ) +
+    labs(subtitle = "Amortização de principal — dívida em pesos") +
+    PLOT_THEME +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7))
+
+  ggplotly(p, tooltip = "text") |>
+    layout(margin = list(b = 80))
+}
+
+# ── Chile: debt maturity profile — USD (principal only) ───────
+chart_cl_maturity_usd <- function(maturity) {
+  if (is.null(maturity) || nrow(maturity) == 0) return(plotly_placeholder())
+
+  df <- maturity |>
+    filter(Principal > 0) |>
+    arrange(Year) |>
+    mutate(
+      USD_bi = Principal / 1e9,
+      Ano    = factor(Year, levels = Year),
+      lbl    = round(USD_bi, 2)
+    )
+
+  if (nrow(df) == 0) return(plotly_placeholder())
+
+  p <- ggplot(df, aes(x = Ano, y = USD_bi,
+                      text = paste0(Year, ": ", round(USD_bi, 2), " USD bi"))) +
+    geom_col(fill = "#ED7D31", width = 0.7) +
+    geom_text(aes(label = lbl), vjust = -0.5, size = 2.8, color = "#333333") +
+    scale_y_continuous(
+      labels = label_number(suffix = " USD bi", accuracy = 0.1),
+      expand = expansion(mult = c(0, 0.12))
+    ) +
+    labs(subtitle = "Amortização de principal — dívida em dólares") +
+    PLOT_THEME +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1, size = 7))
+
+  ggplotly(p, tooltip = "text") |>
+    layout(margin = list(b = 80))
+}
+
 # ── South Africa: domestic government bond maturity profile ───
 chart_sa_maturity <- function(maturity) {
   if (nrow(maturity) == 0) return(plotly_placeholder())
@@ -3028,6 +3094,14 @@ ui <- page_navbar(
       card_header("Detentores de Títulos do Governo"),
       plotlyOutput("cl_holdings", height = "380px")
     ),
+    card(
+      card_header("Perfil de Vencimento — Dívida em Pesos (CLP)"),
+      plotlyOutput("cl_maturity_clp", height = "360px")
+    ),
+    card(
+      card_header("Perfil de Vencimento — Dívida em Dólares (USD)"),
+      plotlyOutput("cl_maturity_usd", height = "360px")
+    ),
     layout_columns(
       col_widths = c(6, 6),
       card(
@@ -3386,6 +3460,8 @@ server <- function(input, output, session) {
   output$cl_composition_ccy <- renderPlotly({ req(chile); chart_composition(chile$lic, "chile", "CLP tri", "currency") })
   output$cl_pre_pos         <- renderPlotly({ req(chile); chart_pre_pos(chile$lic, "chile") })
   output$cl_holdings        <- renderPlotly({ req(chile); chart_holdings(chile$holdings, "chile") })
+  output$cl_maturity_clp    <- renderPlotly({ req(chile); chart_cl_maturity_clp(chile$maturity_clp) })
+  output$cl_maturity_usd    <- renderPlotly({ req(chile); chart_cl_maturity_usd(chile$maturity_usd) })
   output$cl_debt_pct        <- renderPlotly({ req(chile); chart_debt_pct_gdp(chile$debt, chile$gdp_usd, "chile") })
   output$cl_debt_comp       <- renderPlotly({ req(chile); chart_debt_composition(chile$debt, "chile") })
 
