@@ -1967,6 +1967,104 @@ chart_tsy_median_overview <- function(chile_tsy, mx_tsy, sa_tsy, co_tsy,
     layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
 }
 
+# ── Overview: treasury balance as % of GDP ───────────────────
+# Calendar-year basis for all countries. Each country's Saldo is converted to
+# the same trillions unit as its GDP (Chile uses USD GDP since its treasury is
+# in USD). Default: current year by month (Jan–Dez); historical = TRUE: full
+# time series, one line per country.
+chart_tsy_gdp_overview <- function(chile_tsy, chile_gdp, mx_tsy, mx_gdp,
+                                   sa_tsy, sa_gdp, co_tsy, co_gdp,
+                                   historical = FALSE) {
+
+  country_colors <- c(
+    "Chile"         = "#4472C4",
+    "México"        = "#70AD47",
+    "África do Sul" = "#ED7D31",
+    "Colômbia"      = "#7030A0"
+  )
+  mes_lbls <- c("Jan","Fev","Mar","Abr","Mai","Jun",
+                "Jul","Ago","Set","Out","Nov","Dez")
+  cur_year <- year(Sys.Date())
+
+  # factor: multiply Saldo to bring it into the same trillions unit as PIB_tri
+  get_pct_gdp <- function(tsy, gdp, factor, label) {
+    d <- tsy |>
+      filter(!is.na(Fecha), !is.na(Saldo)) |>
+      mutate(Year = year(Fecha), Month = month(Fecha), Saldo_tri = Saldo * factor)
+
+    gpts <- gdp |> filter(!is.na(PIB_tri)) |> arrange(Periodo)
+    if (nrow(gpts) == 0) return(NULL)
+    locf <- function(dt) {
+      cands <- gpts$PIB_tri[gpts$Periodo <= dt]
+      if (length(cands) == 0) NA_real_ else tail(cands, 1)
+    }
+
+    d |>
+      mutate(PIB_tri = sapply(Fecha, locf)) |>
+      filter(!is.na(PIB_tri), PIB_tri > 0) |>
+      mutate(
+        Pct_GDP   = Saldo_tri / PIB_tri * 100,
+        Country   = label,
+        IsCurrent = Year == cur_year
+      ) |>
+      select(Fecha, Year, Month, Pct_GDP, Country, IsCurrent)
+  }
+
+  df <- bind_rows(
+    get_pct_gdp(chile_tsy, chile_gdp, 1 / 1000, "Chile"),          # USD bi → USD tri
+    get_pct_gdp(mx_tsy,    mx_gdp,    1 / 1000, "México"),         # MXN bi → MXN tri
+    get_pct_gdp(sa_tsy,    sa_gdp,    1,        "África do Sul"),  # already ZAR tri
+    get_pct_gdp(co_tsy,    co_gdp,    1,        "Colômbia")        # already COP tri
+  )
+
+  if (is.null(df) || nrow(df) == 0) return(plotly_placeholder())
+
+  df$Country <- factor(df$Country, levels = names(country_colors))
+
+  # ── Historical: continuous full-history time series, 1 line per country ──
+  if (historical) {
+    ts <- df |> arrange(Country, Fecha)
+    p <- ggplot(ts, aes(
+      x = Fecha, y = Pct_GDP, color = Country, group = Country,
+      text = paste0(Country, " — ", format(Fecha, "%b %Y"), "\n",
+                    round(Pct_GDP, 2), "% do PIB")
+    )) +
+      geom_line(linewidth = 0.7) +
+      scale_color_manual(values = country_colors, name = NULL) +
+      scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+      scale_y_continuous(labels = label_percent(scale = 1, accuracy = 0.1)) +
+      labs(subtitle = "Saldo do tesouro como % do PIB — série completa por país") +
+      PLOT_THEME +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+    return(
+      ggplotly(p, tooltip = "text") |>
+        layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
+    )
+  }
+
+  # ── Default: current year by month (Jan–Dez) ──
+  cur_df <- df |> filter(IsCurrent)
+  if (nrow(cur_df) == 0) return(plotly_placeholder())
+
+  p <- ggplot(cur_df, aes(
+    x = Month, y = Pct_GDP, color = Country, group = Country,
+    text = paste0(Country, " — ", mes_lbls[Month], "\n",
+                  round(Pct_GDP, 2), "% do PIB")
+  )) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 2.5, show.legend = FALSE) +
+    scale_color_manual(values = country_colors, name = NULL) +
+    scale_x_continuous(breaks = 1:12, labels = mes_lbls) +
+    scale_y_continuous(labels = label_percent(scale = 1, accuracy = 0.1)) +
+    labs(subtitle = paste0("Saldo do tesouro ", cur_year,
+                           " como % do PIB por mês (Jan–Dez)")) +
+    PLOT_THEME
+
+  ggplotly(p, tooltip = "text") |>
+    layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
+}
+
 # ── Overview: Summary table with per-row green heatmap ───────
 build_summary_table <- function(chile, mexico, sa, colombia) {
   today <- Sys.Date()
@@ -3671,6 +3769,14 @@ ui <- page_navbar(
       plotlyOutput("overview_tsy_median", height = "380px")
     ),
     card(
+      card_header(
+        class = "d-flex justify-content-between align-items-center",
+        "Saldo do Tesouro % do PIB",
+        checkboxInput("overview_tsy_gdp_all", "Histórico completo", value = FALSE)
+      ),
+      plotlyOutput("overview_tsy_gdp", height = "380px")
+    ),
+    card(
       card_header("Run-Rate 2026 % PIB — Comparativo (Mês Fiscal)"),
       plotlyOutput("overview_runrate_pct", height = "380px")
     ),
@@ -3844,6 +3950,13 @@ server <- function(input, output, session) {
     req(chile, mexico, sa, colombia)
     chart_tsy_median_overview(chile$tsy, mexico$tsy, sa$tsy, colombia$tsy,
                               historical = isTRUE(input$overview_tsy_median_all))
+  })
+
+  output$overview_tsy_gdp <- renderPlotly({
+    req(chile, mexico, sa, colombia)
+    chart_tsy_gdp_overview(chile$tsy, chile$gdp_usd, mexico$tsy, mexico$gdp,
+                           sa$tsy, sa$gdp, colombia$tsy, colombia$gdp,
+                           historical = isTRUE(input$overview_tsy_gdp_all))
   })
 
   output$overview_runrate_pct <- renderPlotly({
