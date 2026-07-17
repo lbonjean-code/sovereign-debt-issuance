@@ -45,9 +45,12 @@ run_script(paste0(base, "chile_holdings.R"))
 run_script(paste0(base, "mexico_debt.R"))
 run_script(paste0(base, "mexico_holdings.R"))
 run_script(paste0(base, "mexico_maturity.R"))
+run_script(paste0(base, "mexico_avg_maturity.R"))
 run_script(paste0(base, "sa_debt.R"))
 run_script(paste0(base, "sa_holdings.R"))
 run_script(paste0(base, "colombia_debt.R"))
+run_script(paste0(base, "colombia_holdings.R"))
+run_script(paste0(base, "colombia_entidades_publicas.R"))
 
 
 log("--- Run finished ---")

@@ -10,7 +10,7 @@ library(dplyr)
 library(lubridate)
 
 # --- Config ---
-output_path <- "C:\\Users\\lbonjean\\Documents\\sovereign_bond_tracker\\data\\colombia_entidades_publicas.csv"
+output_path <- "\\\\jgprjfileserver\\Compartilhadas\\Summer\\lbonjean\\fixed income\\data\\colombia_entidades_publicas.csv"
 
 mes_es <- c("enero","febrero","marzo","abril","mayo","junio",
             "julio","agosto","septiembre","octubre","noviembre","diciembre")

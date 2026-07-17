@@ -14,7 +14,7 @@ library(tidyr)
 library(lubridate)
 
 # --- Config ---
-output_path <- "C:\\Users\\lbonjean\\Documents\\sovereign_bond_tracker\\data\\colombia_holdings.csv"
+output_path <- "\\\\jgprjfileserver\\Compartilhadas\\Summer\\lbonjean\\fixed income\\data\\colombia_holdings.csv"
 
 url <- "https://www.irc.gov.co/documents/d/guest/historico-tenedores-tes-2?download=true"
 
