@@ -43,13 +43,21 @@ if (file.exists(output_path)) {
 
 # --- Scrape ultima licitacion ---
 url      <- "https://www.hacienda.cl/areas-de-trabajo/finanzas-internacionales/oficina-de-la-deuda-publica/colocaciones-bcch-soma/resultados-ultima-licitacion"
-page     <- read_html(url)
-raw_text <- page %>% html_node("table") %>% html_table(fill = TRUE, convert = FALSE)
 
-tables <- list(raw_text)
+# Wrap the scrape so a transient network/site failure doesn't abort the whole
+# script — on failure we keep the existing CSV data and skip the append.
+raw_text <- tryCatch({
+  page <- read_html(url)
+  page %>% html_node("table") %>% html_table(fill = TRUE, convert = FALSE)
+}, error = function(e) {
+  message("Scrape failed (", conditionMessage(e), ") — keeping existing data.")
+  NULL
+})
+
+tables <- if (is.null(raw_text)) list() else list(raw_text)
 
 if (length(tables) == 0) {
-  message("No table found - page may be JavaScript-rendered.")
+  message("No table found - scrape skipped or page may be JavaScript-rendered.")
 } else {
   raw_new <- tables[[1]]
   

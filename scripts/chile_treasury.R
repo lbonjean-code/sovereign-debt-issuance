@@ -12,9 +12,6 @@ output_path <- "\\\\jgprjfileserver\\Compartilhadas\\Summer\\lbonjean\\fixed inc
 
 url <- "https://si3.bcentral.cl/Siete/ES/Siete/Cuadro/CAP_FIN_PUB/MN_FIN_PUB_1/GOB_ACT_CONS_T1/act_cons_tesoro"
 
-page <- read_html(url)
-raw  <- html_table(page, fill = TRUE, convert = FALSE)[[1]]
-
 # Helper: convert Spanish-formatted numbers (1.234,5 -> 1234.5)
 parse_es_number <- function(x) {
   x <- gsub("\\.", "", x)
@@ -36,32 +33,45 @@ parse_es_date <- function(x) {
   as.Date(paste0("01/", mon, "/", yr), format = "%d/%m/%Y")
 }
 
-treasury <- raw %>%
-  filter(Serie %in% c("Pesos", "Dólar")) %>%
-  pivot_longer(
-    cols      = -Serie,
-    names_to  = "Periodo",
-    values_to = "Valor"
-  ) %>%
-  mutate(
-    Valor   = parse_es_number(Valor),
-    Periodo = as.Date(sapply(Periodo, parse_es_date))
-  ) %>%
-  filter(!is.na(Valor), !is.na(Periodo)) %>%
-  pivot_wider(
-    names_from  = Serie,
-    values_from = Valor
-  ) %>%
-  rename(Dolar = `Dólar`) %>%
-  arrange(Periodo) %>%
-  # Convert from millions USD to billions USD
-  mutate(
-    Pesos = Pesos / 1000,
-    Dolar = Dolar / 1000,
-    Total = Pesos + Dolar
-  )
+# Scrape + build wrapped so a transient network/site failure keeps the existing CSV
+treasury <- tryCatch({
+  page <- read_html(url)
+  raw  <- html_table(page, fill = TRUE, convert = FALSE)[[1]]
 
-# --- Save ---
-write.csv(treasury, output_path, row.names = FALSE)
-cat("Saved", nrow(treasury), "rows to", output_path, "\n")
-print(tail(treasury, 6))
+  raw %>%
+    filter(Serie %in% c("Pesos", "Dólar")) %>%
+    pivot_longer(
+      cols      = -Serie,
+      names_to  = "Periodo",
+      values_to = "Valor"
+    ) %>%
+    mutate(
+      Valor   = parse_es_number(Valor),
+      Periodo = as.Date(sapply(Periodo, parse_es_date))
+    ) %>%
+    filter(!is.na(Valor), !is.na(Periodo)) %>%
+    pivot_wider(
+      names_from  = Serie,
+      values_from = Valor
+    ) %>%
+    rename(Dolar = `Dólar`) %>%
+    arrange(Periodo) %>%
+    # Convert from millions USD to billions USD
+    mutate(
+      Pesos = Pesos / 1000,
+      Dolar = Dolar / 1000,
+      Total = Pesos + Dolar
+    )
+}, error = function(e) {
+  message("chile_treasury scrape/parse failed (", conditionMessage(e), ") — keeping existing CSV.")
+  NULL
+})
+
+# --- Save (only on success; preserve existing CSV otherwise) ---
+if (!is.null(treasury) && nrow(treasury) > 0) {
+  write.csv(treasury, output_path, row.names = FALSE)
+  cat("Saved", nrow(treasury), "rows to", output_path, "\n")
+  print(tail(treasury, 6))
+} else {
+  cat("chile_treasury: no data written; existing CSV preserved.\n")
+}
