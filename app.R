@@ -163,8 +163,11 @@ load_chile <- function() {
       Fecha_Vencimiento = as.Date(Fecha_Vencimiento)
     )
 
+  holdings <- read_csv(path("chile_holdings.csv"), show_col_types = FALSE) |>
+    mutate(Periodo = as.Date(Periodo))
+
   list(lic = lic, tsy = tsy, gdp = gdp, gdp_usd = gdp_usd, debt = debt,
-       auction_det = auction_det)
+       auction_det = auction_det, holdings = holdings)
 }
 
 # ── Mexico ───────────────────────────────────────────────────
@@ -1791,7 +1794,12 @@ build_summary_table <- function(chile, mexico, sa, colombia) {
   get_h <- function(holdings, country) {
     na_out <- list(pensions = NA_real_, external = NA_real_, other = NA_real_)
     if (is.null(holdings) || nrow(holdings) == 0) return(na_out)
-    if (country == "south_africa") {
+    if (country == "chile") {
+      # Chile only publishes non-resident share (no pension/other breakdown)
+      obs      <- holdings |> slice_max(Periodo, n = 1, with_ties = FALSE)
+      external <- obs$Non_Residents * 100
+      list(pensions = NA_real_, external = external, other = NA_real_)
+    } else if (country == "south_africa") {
       obs      <- holdings |> slice_max(Periodo, n = 1, with_ties = FALSE)
       pensions <- obs$Local_Pension_Funds * 100
       external <- obs$Non_Residents       * 100
@@ -1822,7 +1830,7 @@ build_summary_table <- function(chile, mexico, sa, colombia) {
     }
   }
 
-  cl_h <- get_h(NULL,              "chile")
+  cl_h <- get_h(chile$holdings,    "chile")
   mx_h <- get_h(mexico$holdings,   "mexico")
   sa_h <- get_h(sa$holdings,       "south_africa")
   co_h <- get_h(colombia$holdings, "colombia")
@@ -2156,7 +2164,26 @@ chart_debt_composition <- function(debt, country) {
 chart_holdings <- function(holdings, country) {
   cur_yr <- year(Sys.Date())
 
-  if (country == "south_africa") {
+  if (country == "chile") {
+    # Chile publishes only non-resident vs resident (no holder-type breakdown)
+    plot_order <- c("Residents", "Non_Residents")
+    seg_labels <- c("Residents" = "Residentes", "Non_Residents" = "Não Residentes")
+    seg_colors <- c("Residents" = "#AAAAAA", "Non_Residents" = "#E84855")
+
+    completed <- holdings |>
+      filter(year(Periodo) >= 2020, year(Periodo) < cur_yr, month(Periodo) == 12) |>
+      mutate(label = paste0(year(Periodo), " (Dez)"))
+
+    current_obs <- holdings |>
+      filter(year(Periodo) == cur_yr) |>
+      slice_max(Periodo, n = 1) |>
+      mutate(label = paste0(cur_yr, " (", format(Periodo, "%b"), ")"))
+
+    plot_data <- bind_rows(completed, current_obs) |>
+      mutate(across(all_of(plot_order), ~ . * 100)) |>
+      select(label, all_of(plot_order))
+
+  } else if (country == "south_africa") {
     # bottom → top stack order
     plot_order <- c("Other", "Other_Financial", "Insurers", "Banks", "Local_Pension_Funds", "Non_Residents")
     seg_labels <- c(
@@ -2997,6 +3024,10 @@ ui <- page_navbar(
       card(card_header("Composição — Interna / Externa (USD)"),
            plotlyOutput("cl_debt_comp", height = "340px"))
     ),
+    card(
+      card_header("Detentores de Títulos do Governo"),
+      plotlyOutput("cl_holdings", height = "380px")
+    ),
     layout_columns(
       col_widths = c(6, 6),
       card(
@@ -3354,6 +3385,7 @@ server <- function(input, output, session) {
   output$cl_composition     <- renderPlotly({ req(chile); chart_composition(chile$lic, "chile", "CLP tri", "instrument") })
   output$cl_composition_ccy <- renderPlotly({ req(chile); chart_composition(chile$lic, "chile", "CLP tri", "currency") })
   output$cl_pre_pos         <- renderPlotly({ req(chile); chart_pre_pos(chile$lic, "chile") })
+  output$cl_holdings        <- renderPlotly({ req(chile); chart_holdings(chile$holdings, "chile") })
   output$cl_debt_pct        <- renderPlotly({ req(chile); chart_debt_pct_gdp(chile$debt, chile$gdp_usd, "chile") })
   output$cl_debt_comp       <- renderPlotly({ req(chile); chart_debt_composition(chile$debt, "chile") })
 
