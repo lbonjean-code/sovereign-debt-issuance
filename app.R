@@ -98,15 +98,29 @@ fiscal_month <- function(d, country) {
 
 # ── Chile ────────────────────────────────────────────────────
 load_chile <- function() {
+  # UF/CLP daily rate — forward-filled to cover weekends/holidays
+  uf_raw <- read_csv(path("chile_uf.csv"), show_col_types = FALSE) |>
+    mutate(Fecha = as.Date(Fecha)) |>
+    arrange(Fecha)
+  uf_daily <- tibble(Fecha = seq(min(uf_raw$Fecha), Sys.Date(), by = "day")) |>
+    left_join(uf_raw, by = "Fecha") |>
+    fill(UF_CLP, .direction = "down")
+
   lic <- read_csv(path("chile_licitaciones.csv"), show_col_types = FALSE) |>
     filter(!is.na(Fecha_Licitacion), !is.na(Monto)) |>
+    mutate(Fecha = as.Date(Fecha_Licitacion)) |>
+    left_join(uf_daily, by = "Fecha") |>
     mutate(
-      Fecha      = as.Date(Fecha_Licitacion),
+      # UF amounts in chile_licitaciones are in Millones UF → convert to Millones CLP
+      Monto      = if_else(!is.na(Moneda) & Moneda == "UF",
+                           Monto * UF_CLP,
+                           Monto),
       Monto      = Monto / 1e6,
-      Tipo       = if_else(Tenor == "CP", "CP", "LP"),
+      Tipo       = case_when(Tenor == "CP" ~ "CP", Tenor == "LP" ~ "LP", TRUE ~ "LP"),
       FY         = fy_chile(Fecha),
       Mes_Fiscal = month(Fecha)
     ) |>
+    select(-UF_CLP) |>
     filter(Fecha >= as.Date("2000-01-01"), Fecha <= Sys.Date())
 
   tsy <- read_csv(path("chile_treasury.csv"), show_col_types = FALSE) |>
@@ -2626,7 +2640,7 @@ chart_cl_btc <- function(det) {
       Tipo    = if_else(grepl("^BTU", Bono), "BTU", "BTP"),
       tooltip = paste0(format(Fecha_Licitacion, "%d/%m/%Y"), "\n", Bono,
                        "\nBTC: ", round(BTC, 2), "x",
-                       "\nMonto: CLP ", format(round(Monto_Asignado / 1e3, 0), big.mark = ","), "mm")
+                       "\nMonto: CLP ", format(round(Monto_Asig_CLP / 1e3, 0), big.mark = ","), "mm")
     )
 
   if (nrow(df) == 0) return(plotly_placeholder("Sem dados"))
@@ -2657,11 +2671,11 @@ chart_cl_yield <- function(det) {
 
   cutoff <- Sys.Date() - 365 * 5
   df <- det |>
-    filter(!is.na(Tasa_Corte), !is.na(Monto_Asignado),
-           Monto_Asignado > 0, Tasa_Corte > 0,
+    filter(!is.na(Tasa_Corte), !is.na(Monto_Asig_CLP),
+           Monto_Asig_CLP > 0, Tasa_Corte > 0,
            Fecha_Licitacion >= cutoff) |>
     group_by(Fecha_Licitacion, Moneda) |>
-    summarise(Yield_Corte = weighted.mean(Tasa_Corte, Monto_Asignado, na.rm = TRUE),
+    summarise(Yield_Corte = weighted.mean(Tasa_Corte, Monto_Asig_CLP, na.rm = TRUE),
               .groups = "drop") |>
     mutate(tip = paste0(format(Fecha_Licitacion, "%d/%m/%Y"), "\n", Moneda,
                         "\nTaxa de Corte: ", round(Yield_Corte, 3), "%"))

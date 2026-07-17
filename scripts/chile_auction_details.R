@@ -5,6 +5,7 @@
 
 library(readxl)
 library(dplyr)
+library(readr)
 
 base        <- "\\\\jgprjfileserver\\Compartilhadas\\Summer\\lbonjean\\fixed income\\chile\\"
 output_path <- "\\\\jgprjfileserver\\Compartilhadas\\Summer\\lbonjean\\fixed income\\data\\chile_auction_details.csv"
@@ -71,6 +72,22 @@ parse_year <- function(yr) {
 
 all_data <- lapply(2021:2026, parse_year)
 result   <- bind_rows(all_data) |> arrange(Fecha_Licitacion)
+
+# Join UF/CLP rate and convert BTU amounts (Miles UF → Millones CLP)
+uf_path <- "\\\\jgprjfileserver\\Compartilhadas\\Summer\\lbonjean\\fixed income\\data\\chile_uf.csv"
+uf <- read_csv(uf_path, show_col_types = FALSE) |>
+  mutate(Fecha_Licitacion = as.Date(Fecha))
+
+result <- result |>
+  left_join(select(uf, Fecha_Licitacion, UF_CLP), by = "Fecha_Licitacion") |>
+  mutate(
+    # BTU amounts are in Miles UF; BTP amounts are in Millones CLP
+    # Convert all to Millones CLP for comparability
+    Cupo_CLP           = if_else(Moneda == "UF", Cupo           * UF_CLP / 1e3, Cupo),
+    Monto_Dem_CLP      = if_else(Moneda == "UF", Monto_Demandado * UF_CLP / 1e3, Monto_Demandado),
+    Monto_Asig_CLP     = if_else(Moneda == "UF", Monto_Asignado  * UF_CLP / 1e3, Monto_Asignado)
+  ) |>
+  select(-UF_CLP)
 
 cat("Total rows:", nrow(result), "\n")
 print(tail(result, 5))

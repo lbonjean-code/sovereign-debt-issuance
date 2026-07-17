@@ -24,6 +24,7 @@ log("--- Run started ---")
 
 base <- "\\\\jgprjfileserver\\Compartilhadas\\Summer\\lbonjean\\fixed income\\data\\"
 
+run_script(paste0(base, "chile_uf.R"))
 run_script(paste0(base, "chile_emissions.R"))
 run_script(paste0(base, "chile_treasury.R"))
 run_script(paste0(base, "chile_gdp.R"))
