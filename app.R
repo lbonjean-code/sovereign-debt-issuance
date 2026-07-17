@@ -829,61 +829,165 @@ chart_pct_gdp <- function(lic, gdp, country) {
            margin = list(b = 80))
 }
 
-# ── 4. Weekly emissions snapshot (Mon–Fri of most recent week) ─
-chart_weekly_emissions <- function(lic, country, ccy_label) {
-  last_date <- suppressWarnings(max(lic$Fecha, na.rm = TRUE))
-  if (is.na(last_date)) return(plotly_placeholder())
+# ── 4. Weekly issuance — stacked bars + total line (like monthly) ─
+chart_weekly <- function(lic, country, ccy_label, n_weeks = 26L) {
+  today      <- Sys.Date()
+  this_mon   <- floor_date(today, "week", week_start = 1)
+  start_date <- if (is.null(n_weeks)) {
+    floor_date(min(lic$Fecha, na.rm = TRUE), "week", week_start = 1)
+  } else {
+    this_mon - 7L * (n_weeks - 1L)
+  }
 
-  wday      <- as.integer(format(last_date, "%u"))   # ISO: 1=Mon … 7=Sun
-  monday    <- last_date - (wday - 1L)
-  friday    <- monday + 4L
-  week_days <- seq.Date(monday, friday, by = "day")
+  span_weeks <- as.numeric(difftime(today, start_date, units = "weeks"))
+  x_breaks <- if (span_weeks > 156) "1 year" else if (span_weeks > 78) "3 months" else "1 month"
+  x_labels <- if (span_weeks > 156) "%Y" else "%b %Y"
 
-  tipo_lvls <- c("CP", "LP", "Entidades Públicas")
-  clrs      <- c(CP = CLR_CP, LP = CLR_LP, "Entidades Públicas" = CLR_EP)
-
-  df <- lic |>
-    filter(Fecha >= monday, Fecha <= friday) |>
-    mutate(Tipo = as.character(Tipo)) |>
-    group_by(Fecha, Tipo) |>
+  weekly <- lic |>
+    filter(Fecha >= start_date, Fecha <= today) |>
+    mutate(Sem_Date = floor_date(Fecha, "week", week_start = 1)) |>
+    group_by(Sem_Date, Tipo) |>
     summarise(Monto = sum(Monto, na.rm = TRUE), .groups = "drop")
 
-  present_tipos <- if (nrow(df) > 0) intersect(tipo_lvls, unique(df$Tipo)) else tipo_lvls[1]
+  totals <- weekly |>
+    group_by(Sem_Date) |>
+    summarise(Total = sum(Monto), .groups = "drop")
 
-  full_grid <- lapply(week_days, function(d) {
-    data.frame(Fecha = d, Tipo = present_tipos, stringsAsFactors = FALSE)
-  }) |>
-    bind_rows() |>
-    left_join(df, by = c("Fecha", "Tipo")) |>
-    mutate(
-      Monto = replace_na(Monto, 0),
-      label = format(Fecha, "%d/%m"),
-      Tipo  = factor(Tipo, levels = tipo_lvls)
-    ) |>
-    mutate(label = factor(label, levels = unique(label)))
+  if (nrow(weekly) == 0) return(plotly_empty(type = "bar"))
 
-  if (all(full_grid$Monto == 0)) return(plotly_placeholder("Sem emissões nesta semana"))
-
-  p <- ggplot(full_grid, aes(
-    x    = label,
+  p <- ggplot(weekly, aes(
+    x    = Sem_Date,
     y    = Monto,
     fill = Tipo,
-    text = paste0(format(Fecha, "%d/%m"), " — ", Tipo, "\n",
+    text = paste0("Semana de ", format(Sem_Date, "%d/%m/%Y"), "\n", Tipo, ": ",
                   round(Monto, 3), " ", ccy_label)
   )) +
-    geom_col(width = 0.55, position = "stack") +
-    scale_fill_manual(values = clrs, name = NULL, drop = TRUE) +
+    geom_col(position = "stack", width = 5) +
+    geom_line(
+      data = totals,
+      aes(x = Sem_Date, y = Total, colour = "Total",
+          text = paste0("Semana de ", format(Sem_Date, "%d/%m/%Y"),
+                        "\nTotal: ", round(Total, 3), " ", ccy_label)),
+      linewidth = 0.8, inherit.aes = FALSE
+    ) +
+    geom_point(
+      data = totals,
+      aes(x = Sem_Date, y = Total, colour = "Total",
+          text = paste0("Semana de ", format(Sem_Date, "%d/%m/%Y"),
+                        "\nTotal: ", round(Total, 3), " ", ccy_label)),
+      size = 1.8, inherit.aes = FALSE
+    ) +
+    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP, "Entidades Públicas" = CLR_EP)) +
+    scale_colour_manual(values = c(Total = CLR_TOTAL)) +
+    scale_x_date(
+      date_breaks = x_breaks,
+      date_labels = x_labels,
+      expand      = expansion(add = 7)
+    ) +
     scale_y_continuous(
-      labels = label_number(accuracy = 0.001),
-      expand = expansion(mult = c(0, 0.12))
+      labels = label_number(suffix = paste0(" ", ccy_label), accuracy = 0.01),
+      expand = expansion(mult = c(0, 0.05))
     ) +
     labs(subtitle = paste0(
-      "Semana de ", format(monday, "%d/%m"), " a ", format(friday, "%d/%m/%Y")
+      format(start_date, "%d/%m/%Y"), " — ", format(this_mon, "%d/%m/%Y"),
+      " | por semana"
     )) +
-    PLOT_THEME
+    PLOT_THEME +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
 
-  clean_legend(ggplotly(p, tooltip = "text")) |>
-    layout(legend = list(orientation = "h", y = -0.2))
+  clean_legend(ggplotly(p, tooltip = "text"), hide_line_total = TRUE) |>
+    layout(legend = list(orientation = "h", y = -0.25),
+           margin = list(b = 80))
+}
+
+# ── 4b. Weekly issuance as % of rolling 12m GDP ──────────────
+chart_weekly_pct_gdp <- function(lic, gdp, country, ccy_label, n_weeks = 26L) {
+  today      <- Sys.Date()
+  this_mon   <- floor_date(today, "week", week_start = 1)
+  start_date <- if (is.null(n_weeks)) {
+    floor_date(min(lic$Fecha, na.rm = TRUE), "week", week_start = 1)
+  } else {
+    this_mon - 7L * (n_weeks - 1L)
+  }
+
+  span_weeks <- as.numeric(difftime(today, start_date, units = "weeks"))
+  x_breaks <- if (span_weeks > 156) "1 year" else if (span_weeks > 78) "3 months" else "1 month"
+  x_labels <- if (span_weeks > 156) "%Y" else "%b %Y"
+
+  weekly <- lic |>
+    filter(Fecha >= start_date, Fecha <= today) |>
+    mutate(Sem_Date = floor_date(Fecha, "week", week_start = 1)) |>
+    group_by(Sem_Date, Tipo) |>
+    summarise(Monto = sum(Monto, na.rm = TRUE), .groups = "drop")
+
+  # LOCF: for each week, use most recent quarterly GDP released at or before it
+  gdp_pts <- gdp |>
+    filter(!is.na(PIB_tri)) |>
+    arrange(Periodo) |>
+    select(Periodo, PIB_tri)
+
+  gdp_for_week <- function(d) {
+    idx <- which(gdp_pts$Periodo <= d)
+    if (length(idx) == 0) NA_real_ else gdp_pts$PIB_tri[max(idx)]
+  }
+
+  week_gdp <- weekly |>
+    distinct(Sem_Date) |>
+    mutate(PIB_tri = sapply(Sem_Date, gdp_for_week))
+
+  weekly <- weekly |>
+    left_join(week_gdp, by = "Sem_Date") |>
+    filter(!is.na(PIB_tri)) |>
+    mutate(Pct = Monto / PIB_tri * 100)
+
+  totals <- weekly |>
+    group_by(Sem_Date) |>
+    summarise(Total_Pct = sum(Pct), .groups = "drop")
+
+  if (nrow(weekly) == 0) return(plotly_empty(type = "bar"))
+
+  p <- ggplot(weekly, aes(
+    x    = Sem_Date,
+    y    = Pct,
+    fill = Tipo,
+    text = paste0("Semana de ", format(Sem_Date, "%d/%m/%Y"), "\n", Tipo, ": ",
+                  round(Pct, 4), "% do PIB")
+  )) +
+    geom_col(position = "stack", width = 5) +
+    geom_line(
+      data = totals,
+      aes(x = Sem_Date, y = Total_Pct, colour = "Total",
+          text = paste0("Semana de ", format(Sem_Date, "%d/%m/%Y"),
+                        "\nTotal: ", round(Total_Pct, 4), "% do PIB")),
+      linewidth = 0.8, inherit.aes = FALSE
+    ) +
+    geom_point(
+      data = totals,
+      aes(x = Sem_Date, y = Total_Pct, colour = "Total",
+          text = paste0("Semana de ", format(Sem_Date, "%d/%m/%Y"),
+                        "\nTotal: ", round(Total_Pct, 4), "% do PIB")),
+      size = 1.8, inherit.aes = FALSE
+    ) +
+    scale_fill_manual(values   = c(CP = CLR_CP, LP = CLR_LP, "Entidades Públicas" = CLR_EP)) +
+    scale_colour_manual(values = c(Total = CLR_TOTAL)) +
+    scale_x_date(
+      date_breaks = x_breaks,
+      date_labels = x_labels,
+      expand      = expansion(add = 7)
+    ) +
+    scale_y_continuous(
+      labels = label_percent(scale = 1, accuracy = 0.001),
+      expand = expansion(mult = c(0, 0.05))
+    ) +
+    labs(subtitle = paste0(
+      format(start_date, "%d/%m/%Y"), " — ", format(this_mon, "%d/%m/%Y"),
+      " | por semana | PIB acumulado 12 meses"
+    )) +
+    PLOT_THEME +
+    theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+  clean_legend(ggplotly(p, tooltip = "text"), hide_line_total = TRUE) |>
+    layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
 }
 
 # ── 5. Emissions % PIB — seasonal (vs. historical IQR band) ──
@@ -953,6 +1057,103 @@ chart_seasonal_pct_gdp <- function(lic, gdp, country) {
     labs(subtitle = paste0(
       "AF ", fmt_fy(cur_fy, country),
       " vs. histórico — banda 20–80% | Emissões mensais % PIB"
+    )) +
+    PLOT_THEME
+
+  clean_legend(ggplotly(p, tooltip = c("x", "y", "colour", "fill"))) |>
+    layout(legend = list(orientation = "h", y = -0.2))
+}
+
+# ── 5b. Emissions % PIB — WEEKLY seasonal (vs. historical band) ─
+# Weekly analogue of chart_seasonal_pct_gdp. Buckets issuance by week-of-fiscal-
+# year (week 1 = first week of the FY start month), zero-filling weeks with no
+# auction so the band reflects genuine weekly seasonality, not just active weeks.
+chart_weekly_seasonal_pct_gdp <- function(lic, gdp, country) {
+  today        <- Sys.Date()
+  cur_fy       <- current_fy(country)
+  is_sa        <- country == "south_africa"
+  fy_start_str <- if (is_sa) "-04-01" else "-01-01"
+  N_WEEKS      <- 52L
+
+  # week index within the fiscal year (FY column = fiscal/calendar start year)
+  lic2 <- lic |>
+    mutate(
+      FY_start = as.Date(paste0(FY, fy_start_str)),
+      Week_FY  = pmin(as.integer(floor(as.numeric(Fecha - FY_start) / 7) + 1L), N_WEEKS)
+    ) |>
+    filter(Week_FY >= 1L, Week_FY <= N_WEEKS)
+
+  wk_iss <- lic2 |>
+    group_by(FY, Week_FY) |>
+    summarise(Monto = sum(Monto, na.rm = TRUE), .groups = "drop")
+
+  years <- sort(unique(wk_iss$FY))
+  if (length(years) == 0) return(plotly_placeholder())
+
+  cur_fy_start <- as.Date(paste0(cur_fy, fy_start_str))
+  cur_week     <- min(as.integer(floor(as.numeric(today - cur_fy_start) / 7) + 1L), N_WEEKS)
+
+  # full grid: history → weeks 1..52; current FY → weeks 1..cur_week
+  grid <- do.call(rbind, lapply(years, function(y) {
+    wmax <- if (y == cur_fy) cur_week else N_WEEKS
+    if (wmax < 1L) return(NULL)
+    data.frame(FY = y, Week_FY = 1:wmax)
+  }))
+
+  gdp_pts  <- gdp |> filter(!is.na(PIB_tri)) |> arrange(Periodo)
+  locf_gdp <- function(d) {
+    cands <- gdp_pts$PIB_tri[gdp_pts$Periodo <= d]
+    if (length(cands) == 0) NA_real_ else tail(cands, 1)
+  }
+
+  df <- grid |>
+    left_join(wk_iss, by = c("FY", "Week_FY")) |>
+    mutate(
+      Monto        = replace_na(Monto, 0),
+      Fecha_approx = as.Date(paste0(FY, fy_start_str)) + (Week_FY - 1L) * 7L,
+      PIB          = sapply(Fecha_approx, locf_gdp),
+      Pct          = if_else(!is.na(PIB) & PIB > 0, Monto / PIB * 100, NA_real_)
+    ) |>
+    filter(!is.na(Pct))
+
+  hist <- df |> filter(FY < cur_fy)
+  cur  <- df |> filter(FY == cur_fy)
+
+  band <- hist |>
+    group_by(Week_FY) |>
+    summarise(
+      Med = median(Pct, na.rm = TRUE),
+      Lo  = quantile(Pct, 0.20, na.rm = TRUE),
+      Hi  = quantile(Pct, 0.80, na.rm = TRUE),
+      .groups = "drop"
+    )
+
+  if (nrow(band) == 0) return(plotly_placeholder())
+
+  p <- ggplot(band, aes(x = Week_FY)) +
+    geom_ribbon(aes(ymin = Lo, ymax = Hi, group = 1, fill = "Banda 20–80%"),
+                alpha = 0.25) +
+    geom_line(aes(y = Med, group = 1, colour = "Mediana"),
+              linewidth = 1, linetype = "dashed") +
+    geom_line(data = cur,
+              aes(x = Week_FY, y = Pct, group = 1, colour = as.character(cur_fy)),
+              linewidth = 1.2, inherit.aes = FALSE) +
+    geom_point(data = cur,
+               aes(x = Week_FY, y = Pct, colour = as.character(cur_fy)),
+               size = 1.8, inherit.aes = FALSE) +
+    scale_fill_manual(values   = c("Banda 20–80%" = CLR_HIST)) +
+    scale_colour_manual(values = setNames(
+      c(CLR_MED, CLR_CURRENT),
+      c("Mediana", as.character(cur_fy))
+    )) +
+    scale_x_continuous(breaks = seq(4L, N_WEEKS, 4L)) +
+    scale_y_continuous(
+      labels = label_percent(scale = 1, accuracy = 0.01),
+      expand = expansion(mult = c(0, 0.1))
+    ) +
+    labs(subtitle = paste0(
+      "AF ", fmt_fy(cur_fy, country),
+      " vs. histórico — banda 20–80% | Emissões semanais % PIB | Semana da AF"
     )) +
     PLOT_THEME
 
@@ -1668,7 +1869,12 @@ chart_runrate_pct_gdp_overview <- function(
 }
 
 # ── Overview: treasury balance as % of historical median ─────
-chart_tsy_median_overview <- function(chile_tsy, mx_tsy, sa_tsy, co_tsy) {
+# Calendar-year basis for all countries (SA is NOT treated on its fiscal year
+# here). Default: current year vs the monthly median on a Jan–Dez axis.
+# historical = TRUE: continuous full-history time series, one line per country
+# (x = date), each point = that month's balance / its historical monthly median.
+chart_tsy_median_overview <- function(chile_tsy, mx_tsy, sa_tsy, co_tsy,
+                                      historical = FALSE) {
 
   country_colors <- c(
     "Chile"         = "#4472C4",
@@ -1676,56 +1882,85 @@ chart_tsy_median_overview <- function(chile_tsy, mx_tsy, sa_tsy, co_tsy) {
     "África do Sul" = "#ED7D31",
     "Colômbia"      = "#7030A0"
   )
+  mes_lbls <- c("Jan","Fev","Mar","Abr","Mai","Jun",
+                "Jul","Ago","Set","Out","Nov","Dez")
+  cur_year <- year(Sys.Date())
 
-  get_pct_median <- function(tsy, country, label) {
-    cur_fy <- current_fy(country)
-    hist   <- tsy |> filter(FY < cur_fy)
-    cur    <- tsy |> filter(FY == cur_fy)
-    if (nrow(hist) == 0 || nrow(cur) == 0) return(NULL)
+  get_pct_median <- function(tsy, label) {
+    d <- tsy |>
+      filter(!is.na(Fecha), !is.na(Saldo)) |>
+      mutate(Year = year(Fecha), Month = month(Fecha))
 
-    medians <- hist |>
-      group_by(Mes_Fiscal) |>
+    medians <- d |>
+      filter(Year < cur_year) |>
+      group_by(Month) |>
       summarise(Med = median(Saldo, na.rm = TRUE), .groups = "drop")
+    if (nrow(medians) == 0) return(NULL)
 
-    cur |>
-      left_join(medians, by = "Mes_Fiscal") |>
+    d |>
+      left_join(medians, by = "Month") |>
       filter(!is.na(Med), Med != 0) |>
       mutate(
-        Pct_Med = Saldo / Med * 100,
-        Country = label
+        Pct_Med   = Saldo / Med * 100,
+        Country   = label,
+        IsCurrent = Year == cur_year
       ) |>
-      select(Mes_Fiscal, Saldo, Med, Pct_Med, Country)
+      select(Fecha, Year, Month, Saldo, Med, Pct_Med, Country, IsCurrent)
   }
 
   df <- bind_rows(
-    get_pct_median(chile_tsy, "chile",        "Chile"),
-    get_pct_median(mx_tsy,    "mexico",       "México"),
-    get_pct_median(sa_tsy,    "south_africa", "África do Sul"),
-    get_pct_median(co_tsy,    "colombia",     "Colômbia")
+    get_pct_median(chile_tsy, "Chile"),
+    get_pct_median(mx_tsy,    "México"),
+    get_pct_median(sa_tsy,    "África do Sul"),
+    get_pct_median(co_tsy,    "Colômbia")
   )
 
   if (is.null(df) || nrow(df) == 0) return(plotly_placeholder())
 
-  p <- ggplot(df, aes(
-    x     = Mes_Fiscal,
-    y     = Pct_Med,
-    color = Country,
-    group = Country,
-    text  = paste0(Country, " — Mês Fiscal ", Mes_Fiscal, "\n",
-                   round(Pct_Med, 1), "% da mediana histórica")
+  df$Country <- factor(df$Country, levels = names(country_colors))
+
+  # ── Historical: continuous full-history time series, 1 line per country ──
+  if (historical) {
+    ts <- df |> arrange(Country, Fecha)
+    p <- ggplot(ts, aes(
+      x = Fecha, y = Pct_Med, color = Country, group = Country,
+      text = paste0(Country, " — ", format(Fecha, "%b %Y"), "\n",
+                    round(Pct_Med, 1), "% da mediana histórica")
+    )) +
+      geom_hline(yintercept = 100, linetype = "dashed",
+                 color = "grey50", linewidth = 0.6) +
+      geom_line(linewidth = 0.7) +
+      scale_color_manual(values = country_colors, name = NULL) +
+      scale_x_date(date_breaks = "1 year", date_labels = "%Y") +
+      scale_y_continuous(labels = label_percent(scale = 1, accuracy = 1)) +
+      labs(subtitle = "Saldo do tesouro como % da mediana histórica mensal — série completa por país") +
+      PLOT_THEME +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+    return(
+      ggplotly(p, tooltip = "text") |>
+        layout(legend = list(orientation = "h", y = -0.25), margin = list(b = 80))
+    )
+  }
+
+  # ── Default: current year vs monthly median (seasonality, Jan–Dez) ──
+  cur_df <- df |> filter(IsCurrent)
+  if (nrow(cur_df) == 0) return(plotly_placeholder())
+
+  p <- ggplot(cur_df, aes(
+    x = Month, y = Pct_Med, color = Country, group = Country,
+    text = paste0(Country, " — ", mes_lbls[Month], "\n",
+                  round(Pct_Med, 1), "% da mediana histórica")
   )) +
     geom_hline(yintercept = 100, linetype = "dashed",
                color = "grey50", linewidth = 0.6) +
     geom_line(linewidth = 1) +
-    geom_point(size = 2.5) +
+    geom_point(size = 2.5, show.legend = FALSE) +
     scale_color_manual(values = country_colors, name = NULL) +
-    scale_x_continuous(breaks = 1:12, labels = 1:12) +
-    scale_y_continuous(
-      labels = label_percent(scale = 1, accuracy = 1)
-    ) +
-    labs(
-      subtitle = "Saldo do tesouro AF 2026 como % da mediana histórica por mês fiscal | Mês 1 = Jan (CL/MX/CO), Abr (SA)"
-    ) +
+    scale_x_continuous(breaks = 1:12, labels = mes_lbls) +
+    scale_y_continuous(labels = label_percent(scale = 1, accuracy = 1)) +
+    labs(subtitle = paste0("Saldo do tesouro ", cur_year,
+                           " como % da mediana histórica por mês (Jan–Dez)")) +
     PLOT_THEME
 
   ggplotly(p, tooltip = "text") |>
@@ -3007,8 +3242,16 @@ ui <- page_navbar(
   nav_panel(
     "Chile",
     card(
-      card_header("Emissões Semanais"),
-      plotlyOutput("cl_weekly", height = "280px")
+      card_header(
+        class = "d-flex justify-content-between align-items-center",
+        "Emissões Semanais",
+        checkboxInput("cl_weekly_all", "Histórico completo", value = FALSE)
+      ),
+      plotlyOutput("cl_weekly", height = "320px")
+    ),
+    card(
+      card_header("Emissões Semanais % PIB"),
+      plotlyOutput("cl_weekly_pct", height = "320px")
     ),
     card(
       card_header(
@@ -3024,6 +3267,8 @@ ui <- page_navbar(
     ),
     card(card_header("Emissões % PIB — Sazonalidade"),
          plotlyOutput("cl_seasonal_pct", height = "360px")),
+    card(card_header("Emissões % PIB — Sazonalidade (Semanal)"),
+         plotlyOutput("cl_weekly_seasonal_pct", height = "360px")),
     layout_columns(
       col_widths = c(6, 6),
       card(card_header("Caixa do Tesouro — Total (Sazonal)"),
@@ -3130,8 +3375,16 @@ ui <- page_navbar(
   nav_panel(
     "México",
     card(
-      card_header("Emissões Semanais"),
-      plotlyOutput("mx_weekly", height = "280px")
+      card_header(
+        class = "d-flex justify-content-between align-items-center",
+        "Emissões Semanais",
+        checkboxInput("mx_weekly_all", "Histórico completo", value = FALSE)
+      ),
+      plotlyOutput("mx_weekly", height = "320px")
+    ),
+    card(
+      card_header("Emissões Semanais % PIB"),
+      plotlyOutput("mx_weekly_pct", height = "320px")
     ),
     card(
       card_header(
@@ -3147,6 +3400,8 @@ ui <- page_navbar(
     ),
     card(card_header("Emissões % PIB — Sazonalidade"),
          plotlyOutput("mx_seasonal_pct", height = "360px")),
+    card(card_header("Emissões % PIB — Sazonalidade (Semanal)"),
+         plotlyOutput("mx_weekly_seasonal_pct", height = "360px")),
     layout_columns(
       col_widths = c(6, 6),
       card(card_header("Caixa do Tesouro (Sazonal)"),
@@ -3214,8 +3469,16 @@ ui <- page_navbar(
   nav_panel(
     "África do Sul",
     card(
-      card_header("Emissões Semanais"),
-      plotlyOutput("sa_weekly", height = "280px")
+      card_header(
+        class = "d-flex justify-content-between align-items-center",
+        "Emissões Semanais",
+        checkboxInput("sa_weekly_all", "Histórico completo", value = FALSE)
+      ),
+      plotlyOutput("sa_weekly", height = "320px")
+    ),
+    card(
+      card_header("Emissões Semanais % PIB"),
+      plotlyOutput("sa_weekly_pct", height = "320px")
     ),
     card(
       card_header(
@@ -3231,6 +3494,8 @@ ui <- page_navbar(
     ),
     card(card_header("Emissões % PIB — Sazonalidade"),
          plotlyOutput("sa_seasonal_pct", height = "360px")),
+    card(card_header("Emissões % PIB — Sazonalidade (Semanal)"),
+         plotlyOutput("sa_weekly_seasonal_pct", height = "360px")),
     layout_columns(
       col_widths = c(6, 6),
       card(card_header("Caixa do Tesouro (Sazonal)"),
@@ -3301,8 +3566,16 @@ ui <- page_navbar(
   nav_panel(
     "Colômbia",
     card(
-      card_header("Emissões Semanais"),
-      plotlyOutput("co_weekly", height = "280px")
+      card_header(
+        class = "d-flex justify-content-between align-items-center",
+        "Emissões Semanais",
+        checkboxInput("co_weekly_all", "Histórico completo", value = FALSE)
+      ),
+      plotlyOutput("co_weekly", height = "320px")
+    ),
+    card(
+      card_header("Emissões Semanais % PIB"),
+      plotlyOutput("co_weekly_pct", height = "320px")
     ),
     card(
       card_header(
@@ -3318,6 +3591,8 @@ ui <- page_navbar(
     ),
     card(card_header("Emissões % PIB — Sazonalidade"),
          plotlyOutput("co_seasonal_pct", height = "360px")),
+    card(card_header("Emissões % PIB — Sazonalidade (Semanal)"),
+         plotlyOutput("co_weekly_seasonal_pct", height = "360px")),
     layout_columns(
       col_widths = c(6, 6),
       card(card_header("Caixa do Tesouro (Sazonal)"),
@@ -3388,7 +3663,11 @@ ui <- page_navbar(
       plotlyOutput("overview_meta_progress", height = "320px")
     ),
     card(
-      card_header("Saldo do Tesouro % da Mediana Histórica — 2026"),
+      card_header(
+        class = "d-flex justify-content-between align-items-center",
+        "Saldo do Tesouro % da Mediana Histórica",
+        checkboxInput("overview_tsy_median_all", "Histórico completo", value = FALSE)
+      ),
       plotlyOutput("overview_tsy_median", height = "380px")
     ),
     card(
@@ -3446,8 +3725,10 @@ server <- function(input, output, session) {
   output$cl_monthly     <- renderPlotly({ req(chile); n <- if (isTRUE(input$cl_monthly_all)) NULL else 24L; chart_monthly(chile$lic, "chile", "CLP tri", n_months = n) })
   output$cl_monthly_pct <- renderPlotly({ req(chile); n <- if (isTRUE(input$cl_monthly_all)) NULL else 24L; chart_monthly_pct_gdp(chile$lic, chile$gdp, "chile", "CLP tri", n_months = n) })
   output$cl_vs_target   <- renderPlotly({ req(chile); chart_vs_target(chile$lic, TARGET_CHILE, "chile", "CLP tri", "2026") })
-  output$cl_weekly       <- renderPlotly({ req(chile); chart_weekly_emissions(chile$lic, "chile", "CLP tri") })
+  output$cl_weekly       <- renderPlotly({ req(chile); n <- if (isTRUE(input$cl_weekly_all)) NULL else 26L; chart_weekly(chile$lic, "chile", "CLP tri", n_weeks = n) })
+  output$cl_weekly_pct   <- renderPlotly({ req(chile); n <- if (isTRUE(input$cl_weekly_all)) NULL else 26L; chart_weekly_pct_gdp(chile$lic, chile$gdp, "chile", "CLP tri", n_weeks = n) })
   output$cl_seasonal_pct <- renderPlotly({ req(chile); chart_seasonal_pct_gdp(chile$lic, chile$gdp, "chile") })
+  output$cl_weekly_seasonal_pct <- renderPlotly({ req(chile); chart_weekly_seasonal_pct_gdp(chile$lic, chile$gdp, "chile") })
   output$cl_tsy_seas    <- renderPlotly({ req(chile); chart_tsy_seasonal(chile$tsy, "chile", "USD bi") })
   output$cl_tsy_ts      <- renderPlotly({ req(chile); chart_tsy_ts(chile$tsy, "USD bi") })
   output$cl_tsy_seas_pesos <- renderPlotly({ req(chile); chart_tsy_seasonal(chile$tsy, "chile", "USD bi", col = "Pesos") })
@@ -3474,8 +3755,10 @@ server <- function(input, output, session) {
   output$mx_monthly     <- renderPlotly({ req(mexico); n <- if (isTRUE(input$mx_monthly_all)) NULL else 24L; chart_monthly(mexico$lic, "mexico", "MXN tri", n_months = n) })
   output$mx_monthly_pct <- renderPlotly({ req(mexico); n <- if (isTRUE(input$mx_monthly_all)) NULL else 24L; chart_monthly_pct_gdp(mexico$lic, mexico$gdp, "mexico", "MXN tri", n_months = n) })
   output$mx_vs_target   <- renderPlotly({ req(mexico); chart_vs_target(mexico$lic, TARGET_MEXICO, "mexico", "MXN tri", "2026") })
-  output$mx_weekly       <- renderPlotly({ req(mexico); chart_weekly_emissions(mexico$lic, "mexico", "MXN tri") })
+  output$mx_weekly       <- renderPlotly({ req(mexico); n <- if (isTRUE(input$mx_weekly_all)) NULL else 26L; chart_weekly(mexico$lic, "mexico", "MXN tri", n_weeks = n) })
+  output$mx_weekly_pct   <- renderPlotly({ req(mexico); n <- if (isTRUE(input$mx_weekly_all)) NULL else 26L; chart_weekly_pct_gdp(mexico$lic, mexico$gdp, "mexico", "MXN tri", n_weeks = n) })
   output$mx_seasonal_pct <- renderPlotly({ req(mexico); chart_seasonal_pct_gdp(mexico$lic, mexico$gdp, "mexico") })
+  output$mx_weekly_seasonal_pct <- renderPlotly({ req(mexico); chart_weekly_seasonal_pct_gdp(mexico$lic, mexico$gdp, "mexico") })
   output$mx_tsy_seas    <- renderPlotly({ req(mexico); chart_tsy_seasonal(mexico$tsy, "mexico", "MXN bi") })
   output$mx_tsy_ts      <- renderPlotly({ req(mexico); chart_tsy_ts(mexico$tsy, "MXN bi") })
   output$mx_yield           <- renderPlotly({ req(mexico); chart_mx_yield(mexico$lic) })
@@ -3497,8 +3780,10 @@ server <- function(input, output, session) {
   output$sa_monthly     <- renderPlotly({ req(sa); n <- if (isTRUE(input$sa_monthly_all)) NULL else 24L; chart_monthly(sa$lic, "south_africa", "ZAR tri", n_months = n) })
   output$sa_monthly_pct <- renderPlotly({ req(sa); n <- if (isTRUE(input$sa_monthly_all)) NULL else 24L; chart_monthly_pct_gdp(sa$lic, sa$gdp, "south_africa", "ZAR tri", n_months = n) })
   output$sa_vs_target   <- renderPlotly({ req(sa); chart_vs_target(sa$lic, TARGET_SA, "south_africa", "ZAR tri", "2026/27") })
-  output$sa_weekly       <- renderPlotly({ req(sa); chart_weekly_emissions(sa$lic, "south_africa", "ZAR tri") })
+  output$sa_weekly       <- renderPlotly({ req(sa); n <- if (isTRUE(input$sa_weekly_all)) NULL else 26L; chart_weekly(sa$lic, "south_africa", "ZAR tri", n_weeks = n) })
+  output$sa_weekly_pct   <- renderPlotly({ req(sa); n <- if (isTRUE(input$sa_weekly_all)) NULL else 26L; chart_weekly_pct_gdp(sa$lic, sa$gdp, "south_africa", "ZAR tri", n_weeks = n) })
   output$sa_seasonal_pct <- renderPlotly({ req(sa); chart_seasonal_pct_gdp(sa$lic, sa$gdp, "south_africa") })
+  output$sa_weekly_seasonal_pct <- renderPlotly({ req(sa); chart_weekly_seasonal_pct_gdp(sa$lic, sa$gdp, "south_africa") })
   output$sa_tsy_seas    <- renderPlotly({ req(sa); chart_tsy_seasonal(sa$tsy, "south_africa", "ZAR tri") })
   output$sa_tsy_ts      <- renderPlotly({ req(sa); chart_tsy_ts(sa$tsy, "ZAR tri") })
   output$sa_composition     <- renderPlotly({ req(sa); chart_composition(sa$lic, "south_africa", "ZAR tri", "instrument") })
@@ -3520,8 +3805,10 @@ server <- function(input, output, session) {
   output$co_ytd_pct_gdp  <- renderPlotly({ req(colombia); chart_ytd_pct_gdp(colombia$lic, colombia$gdp, "colombia", "COP tri") })
   output$co_runrate      <- renderPlotly({ req(colombia); chart_runrate(colombia$lic, "colombia", "COP tri") })
   output$co_runrate_pct  <- renderPlotly({ req(colombia); chart_runrate_pct_gdp(colombia$lic, colombia$gdp, "colombia") })
-  output$co_weekly       <- renderPlotly({ req(colombia); chart_weekly_emissions(colombia$lic, "colombia", "COP tri") })
+  output$co_weekly       <- renderPlotly({ req(colombia); n <- if (isTRUE(input$co_weekly_all)) NULL else 26L; chart_weekly(colombia$lic, "colombia", "COP tri", n_weeks = n) })
+  output$co_weekly_pct   <- renderPlotly({ req(colombia); n <- if (isTRUE(input$co_weekly_all)) NULL else 26L; chart_weekly_pct_gdp(colombia$lic, colombia$gdp, "colombia", "COP tri", n_weeks = n) })
   output$co_seasonal_pct <- renderPlotly({ req(colombia); chart_seasonal_pct_gdp(colombia$lic, colombia$gdp, "colombia") })
+  output$co_weekly_seasonal_pct <- renderPlotly({ req(colombia); chart_weekly_seasonal_pct_gdp(colombia$lic, colombia$gdp, "colombia") })
   output$co_tsy_seas     <- renderPlotly({ req(colombia); chart_tsy_seasonal(colombia$tsy, "colombia", "COP tri") })
   output$co_tsy_ts       <- renderPlotly({ req(colombia); chart_tsy_ts(colombia$tsy, "COP tri") })
   output$co_vs_target    <- renderPlotly({ req(colombia); chart_vs_target(colombia$lic, TARGET_COLOMBIA, "colombia", "COP tri", "2026") |> layout(legend = list(orientation = "h", y = -0.45), margin = list(b = 120)) })
@@ -3555,7 +3842,8 @@ server <- function(input, output, session) {
 
   output$overview_tsy_median <- renderPlotly({
     req(chile, mexico, sa, colombia)
-    chart_tsy_median_overview(chile$tsy, mexico$tsy, sa$tsy, colombia$tsy)
+    chart_tsy_median_overview(chile$tsy, mexico$tsy, sa$tsy, colombia$tsy,
+                              historical = isTRUE(input$overview_tsy_median_all))
   })
 
   output$overview_runrate_pct <- renderPlotly({
