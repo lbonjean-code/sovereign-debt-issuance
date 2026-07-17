@@ -2566,33 +2566,37 @@ chart_sa_btc <- function(det) {
     layout(legend = list(orientation = "h", y = -0.25))
 }
 
-# ── South Africa: clearing yield vs best bid (new issue premium) ─
-chart_sa_yield <- function(det) {
-  if (is.null(det) || nrow(det) == 0) return(plotly_placeholder("Dados de yield não disponíveis"))
+# ── South Africa: clearing yield by instrument type ───────────
+chart_sa_yield <- function(lic) {
+  if (is.null(lic) || nrow(lic) == 0) return(plotly_placeholder("Dados de yield não disponíveis"))
 
   cutoff <- Sys.Date() - 365 * 5
-  df <- det |>
-    filter(!is.na(Tasa_Corte), !is.na(Monto_Asignado),
-           Monto_Asignado > 0, Tasa_Corte > 0) |>
-    filter(Fecha_Subasta >= cutoff) |>
-    group_by(Fecha_Subasta) |>
-    summarise(
-      Yield_Corte = weighted.mean(Tasa_Corte, Monto_Asignado, na.rm = TRUE),
-      .groups = "drop"
-    ) |>
-    mutate(
-      tip_corte = paste0(format(Fecha_Subasta, "%d/%m/%Y"),
-                         "\nTaxa de Corte: ", round(Yield_Corte, 3), "%")
-    )
+  df <- lic |>
+    filter(Tipo_Bono %in% c("Fixed", "Inflation-Linked", "Treasury Bill"),
+           !is.na(Tasa_Corte), !is.na(Monto_Asignado),
+           Monto_Asignado > 0, Tasa_Corte > 0,
+           Fecha_Subasta >= cutoff) |>
+    group_by(Fecha_Subasta, Tipo_Bono) |>
+    summarise(Yield = weighted.mean(Tasa_Corte, Monto_Asignado, na.rm = TRUE),
+              .groups = "drop") |>
+    mutate(tip = paste0(format(Fecha_Subasta, "%d/%m/%Y"), "\n", Tipo_Bono,
+                        "\nYield: ", round(Yield, 3), "%"))
 
   if (nrow(df) == 0) return(plotly_placeholder("Sem dados"))
 
-  CLR_CORTE <- "#4472C4"
+  CLR <- c("Fixed" = "#4472C4", "Inflation-Linked" = "#ED7D31", "Treasury Bill" = "#70AD47")
 
-  plot_ly(df, x = ~Fecha_Subasta) |>
-    add_lines(y = ~Yield_Corte, name = "Taxa de Corte",
-              line = list(color = CLR_CORTE, width = 1.8),
-              text = ~tip_corte, hoverinfo = "text") |>
+  p <- plot_ly()
+  for (tipo in c("Fixed", "Inflation-Linked", "Treasury Bill")) {
+    d <- filter(df, Tipo_Bono == tipo)
+    if (nrow(d) == 0) next
+    p <- add_lines(p, data = d, x = ~Fecha_Subasta, y = ~Yield,
+                   name = tipo,
+                   line = list(color = CLR[[tipo]], width = 1.8),
+                   text = ~tip, hoverinfo = "text")
+  }
+
+  p |>
     layout(
       xaxis  = list(title = "", tickformat = "%b %Y"),
       yaxis  = list(title = "Yield (%)", ticksuffix = "%"),
@@ -2681,6 +2685,50 @@ chart_cl_yield <- function(det) {
       annotations = list(list(
         x = 0, y = -0.22, xref = "paper", yref = "paper",
         text = "Yield médio ponderado por licitação — últimos 5 anos | Fonte: Tesorería / Hacienda Chile",
+        showarrow = FALSE, xanchor = "left",
+        font = list(size = 9, color = "#888888")
+      ))
+    ) |>
+    config(displayModeBar = FALSE)
+}
+
+# ── Mexico: clearing yield — Cetes / Bono M / Udibono ────────
+chart_mx_yield <- function(lic) {
+  if (is.null(lic) || nrow(lic) == 0) return(plotly_placeholder("Dados de yield não disponíveis"))
+
+  cutoff <- Sys.Date() - 365 * 5
+
+  df <- lic |>
+    filter(Instrumento %in% c("Cetes", "Bono M", "Udibono"),
+           !is.na(Tasa), Tasa > 0, !is.na(Monto), Monto > 0,
+           Fecha >= cutoff) |>
+    group_by(Fecha, Instrumento) |>
+    summarise(Yield = weighted.mean(Tasa, Monto, na.rm = TRUE), .groups = "drop") |>
+    mutate(tip = paste0(format(Fecha, "%d/%m/%Y"), "\n", Instrumento,
+                        "\nTasa: ", round(Yield, 3), "%"))
+
+  if (nrow(df) == 0) return(plotly_placeholder("Sem dados"))
+
+  CLR <- c("Cetes" = "#4472C4", "Bono M" = "#ED7D31", "Udibono" = "#70AD47")
+
+  p <- plot_ly()
+  for (ins in c("Cetes", "Bono M", "Udibono")) {
+    d <- filter(df, Instrumento == ins)
+    if (nrow(d) == 0) next
+    p <- add_lines(p, data = d, x = ~Fecha, y = ~Yield,
+                   name = ins,
+                   line = list(color = CLR[[ins]], width = 1.8),
+                   text = ~tip, hoverinfo = "text")
+  }
+
+  p |>
+    layout(
+      xaxis  = list(title = "", tickformat = "%b %Y"),
+      yaxis  = list(title = "Taxa (%)", ticksuffix = "%"),
+      legend = list(orientation = "h", y = -0.25, tracegroupgap = 4),
+      annotations = list(list(
+        x = 0, y = -0.28, xref = "paper", yref = "paper",
+        text = "Tasa de rendimiento ponderada por subasta — últimos 5 anos | Fonte: Banxico SIE",
         showarrow = FALSE, xanchor = "left",
         font = list(size = 9, color = "#888888")
       ))
@@ -3007,6 +3055,10 @@ ui <- page_navbar(
       card_header("Emissões vs. Meta 2026"),
       plotlyOutput("mx_vs_target", height = "320px")
     ),
+    card(
+      card_header("Yield de Corte — Cetes / Bono M / Udibono"),
+      plotlyOutput("mx_yield", height = "380px")
+    ),
     layout_columns(
       col_widths = c(6, 6),
       card(card_header("Composição — Instrumento"),
@@ -3304,6 +3356,7 @@ server <- function(input, output, session) {
   output$mx_seasonal_pct <- renderPlotly({ req(mexico); chart_seasonal_pct_gdp(mexico$lic, mexico$gdp, "mexico") })
   output$mx_tsy_seas    <- renderPlotly({ req(mexico); chart_tsy_seasonal(mexico$tsy, "mexico", "MXN bi") })
   output$mx_tsy_ts      <- renderPlotly({ req(mexico); chart_tsy_ts(mexico$tsy, "MXN bi") })
+  output$mx_yield           <- renderPlotly({ req(mexico); chart_mx_yield(mexico$lic) })
   output$mx_composition     <- renderPlotly({ req(mexico); chart_composition(mexico$lic, "mexico", "MXN tri", "instrument") })
   output$mx_composition_ccy <- renderPlotly({ req(mexico); chart_composition(mexico$lic, "mexico", "MXN tri", "currency") })
   output$mx_pre_pos         <- renderPlotly({ req(mexico); chart_pre_pos(mexico$lic, "mexico") })
@@ -3335,7 +3388,7 @@ server <- function(input, output, session) {
   output$sa_maturity        <- renderPlotly({ req(sa); chart_sa_maturity(sa$maturity) })
   output$sa_avg_maturity    <- renderPlotly({ req(sa); chart_sa_avg_maturity(sa$avg_maturity) })
   output$sa_btc             <- renderPlotly({ req(sa); chart_sa_btc(sa$auction_det) })
-  output$sa_yield           <- renderPlotly({ req(sa); chart_sa_yield(sa$auction_det) })
+  output$sa_yield           <- renderPlotly({ req(sa); chart_sa_yield(sa$lic) })
 
   # ── Colombia ───────────────────────────────────────────────
   output$co_yield        <- renderPlotly({ req(colombia); chart_co_yield(colombia$lic) })
