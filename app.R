@@ -1068,96 +1068,66 @@ chart_seasonal_pct_gdp <- function(lic, gdp, country) {
     layout(legend = list(orientation = "h", y = -0.2))
 }
 
-# ── 5b. Emissions % PIB — WEEKLY seasonal (vs. historical band) ─
-# Weekly analogue of chart_seasonal_pct_gdp. Buckets issuance by week-of-fiscal-
-# year (week 1 = first week of the FY start month), zero-filling weeks with no
-# auction so the band reflects genuine weekly seasonality, not just active weeks.
-chart_weekly_seasonal_pct_gdp <- function(lic, gdp, country) {
-  today        <- Sys.Date()
-  cur_fy       <- current_fy(country)
-  is_sa        <- country == "south_africa"
-  fy_start_str <- if (is_sa) "-04-01" else "-01-01"
-  N_WEEKS      <- 52L
+# ── 5b. Treasury cash % PIB — seasonal (vs. historical band) ──
+# % of GDP analogue of chart_tsy_seasonal. `factor` scales Saldo into the same
+# trillions unit as the GDP series (Chile passes gdp_usd + factor 1/1000 since
+# its treasury is in USD billions).
+chart_tsy_seasonal_pct_gdp <- function(tsy, gdp, country, factor = 1, col = "Saldo") {
+  tsy    <- tsy |> mutate(Saldo = .data[[col]])
+  cur_fy <- current_fy(country)
+  lbl    <- month_labels(country)
 
-  # week index within the fiscal year (FY column = fiscal/calendar start year)
-  lic2 <- lic |>
-    mutate(
-      FY_start = as.Date(paste0(FY, fy_start_str)),
-      Week_FY  = pmin(as.integer(floor(as.numeric(Fecha - FY_start) / 7) + 1L), N_WEEKS)
-    ) |>
-    filter(Week_FY >= 1L, Week_FY <= N_WEEKS)
-
-  wk_iss <- lic2 |>
-    group_by(FY, Week_FY) |>
-    summarise(Monto = sum(Monto, na.rm = TRUE), .groups = "drop")
-
-  years <- sort(unique(wk_iss$FY))
-  if (length(years) == 0) return(plotly_placeholder())
-
-  cur_fy_start <- as.Date(paste0(cur_fy, fy_start_str))
-  cur_week     <- min(as.integer(floor(as.numeric(today - cur_fy_start) / 7) + 1L), N_WEEKS)
-
-  # full grid: history → weeks 1..52; current FY → weeks 1..cur_week
-  grid <- do.call(rbind, lapply(years, function(y) {
-    wmax <- if (y == cur_fy) cur_week else N_WEEKS
-    if (wmax < 1L) return(NULL)
-    data.frame(FY = y, Week_FY = 1:wmax)
-  }))
-
-  gdp_pts  <- gdp |> filter(!is.na(PIB_tri)) |> arrange(Periodo)
+  gpts <- gdp |> filter(!is.na(PIB_tri)) |> arrange(Periodo)
   locf_gdp <- function(d) {
-    cands <- gdp_pts$PIB_tri[gdp_pts$Periodo <= d]
+    cands <- gpts$PIB_tri[gpts$Periodo <= d]
     if (length(cands) == 0) NA_real_ else tail(cands, 1)
   }
 
-  df <- grid |>
-    left_join(wk_iss, by = c("FY", "Week_FY")) |>
+  d <- tsy |>
+    filter(!is.na(Fecha), !is.na(Saldo)) |>
     mutate(
-      Monto        = replace_na(Monto, 0),
-      Fecha_approx = as.Date(paste0(FY, fy_start_str)) + (Week_FY - 1L) * 7L,
-      PIB          = sapply(Fecha_approx, locf_gdp),
-      Pct          = if_else(!is.na(PIB) & PIB > 0, Monto / PIB * 100, NA_real_)
+      PIB = sapply(Fecha, locf_gdp),
+      Pct = if_else(!is.na(PIB) & PIB > 0, Saldo * factor / PIB * 100, NA_real_)
     ) |>
     filter(!is.na(Pct))
 
-  hist <- df |> filter(FY < cur_fy)
-  cur  <- df |> filter(FY == cur_fy)
+  hist <- d |> filter(FY < cur_fy)
+  cur  <- d |> filter(FY == cur_fy)
 
   band <- hist |>
-    group_by(Week_FY) |>
+    group_by(Mes_Fiscal) |>
     summarise(
       Med = median(Pct, na.rm = TRUE),
       Lo  = quantile(Pct, 0.20, na.rm = TRUE),
       Hi  = quantile(Pct, 0.80, na.rm = TRUE),
       .groups = "drop"
-    )
+    ) |>
+    mutate(MesLabel = factor(lbl[Mes_Fiscal], levels = lbl))
+
+  cur <- cur |> mutate(MesLabel = factor(lbl[Mes_Fiscal], levels = lbl))
 
   if (nrow(band) == 0) return(plotly_placeholder())
 
-  p <- ggplot(band, aes(x = Week_FY)) +
+  p <- ggplot(band, aes(x = MesLabel)) +
     geom_ribbon(aes(ymin = Lo, ymax = Hi, group = 1, fill = "Banda 20–80%"),
                 alpha = 0.25) +
     geom_line(aes(y = Med, group = 1, colour = "Mediana"),
               linewidth = 1, linetype = "dashed") +
     geom_line(data = cur,
-              aes(x = Week_FY, y = Pct, group = 1, colour = as.character(cur_fy)),
+              aes(x = MesLabel, y = Pct, group = 1, colour = as.character(cur_fy)),
               linewidth = 1.2, inherit.aes = FALSE) +
     geom_point(data = cur,
-               aes(x = Week_FY, y = Pct, colour = as.character(cur_fy)),
-               size = 1.8, inherit.aes = FALSE) +
+               aes(x = MesLabel, y = Pct, colour = as.character(cur_fy)),
+               size = 2.5, inherit.aes = FALSE) +
     scale_fill_manual(values   = c("Banda 20–80%" = CLR_HIST)) +
     scale_colour_manual(values = setNames(
       c(CLR_MED, CLR_CURRENT),
       c("Mediana", as.character(cur_fy))
     )) +
-    scale_x_continuous(breaks = seq(4L, N_WEEKS, 4L)) +
-    scale_y_continuous(
-      labels = label_percent(scale = 1, accuracy = 0.01),
-      expand = expansion(mult = c(0, 0.1))
-    ) +
+    scale_y_continuous(labels = label_percent(scale = 1, accuracy = 0.1)) +
     labs(subtitle = paste0(
       "AF ", fmt_fy(cur_fy, country),
-      " vs. histórico — banda 20–80% | Emissões semanais % PIB | Semana da AF"
+      " vs. histórico — banda 20–80% | Saldo do tesouro % PIB"
     )) +
     PLOT_THEME
 
@@ -3369,14 +3339,16 @@ ui <- page_navbar(
     ),
     card(card_header("Emissões % PIB — Sazonalidade"),
          plotlyOutput("cl_seasonal_pct", height = "360px")),
-    card(card_header("Emissões % PIB — Sazonalidade (Semanal)"),
-         plotlyOutput("cl_weekly_seasonal_pct", height = "360px")),
     layout_columns(
       col_widths = c(6, 6),
       card(card_header("Caixa do Tesouro — Total (Sazonal)"),
            plotlyOutput("cl_tsy_seas",       height = "320px")),
       card(card_header("Caixa do Tesouro — Total"),
            plotlyOutput("cl_tsy_ts",         height = "320px"))
+    ),
+    card(
+      card_header("Caixa do Tesouro % PIB (Sazonal)"),
+      plotlyOutput("cl_tsy_seas_pct", height = "320px")
     ),
     layout_columns(
       col_widths = c(6, 6),
@@ -3502,14 +3474,16 @@ ui <- page_navbar(
     ),
     card(card_header("Emissões % PIB — Sazonalidade"),
          plotlyOutput("mx_seasonal_pct", height = "360px")),
-    card(card_header("Emissões % PIB — Sazonalidade (Semanal)"),
-         plotlyOutput("mx_weekly_seasonal_pct", height = "360px")),
     layout_columns(
       col_widths = c(6, 6),
       card(card_header("Caixa do Tesouro (Sazonal)"),
            plotlyOutput("mx_tsy_seas", height = "320px")),
       card(card_header("Caixa do Tesouro"),
            plotlyOutput("mx_tsy_ts",   height = "320px"))
+    ),
+    card(
+      card_header("Caixa do Tesouro % PIB (Sazonal)"),
+      plotlyOutput("mx_tsy_seas_pct", height = "320px")
     ),
     card(
       card_header("Emissões YTD"),
@@ -3596,14 +3570,16 @@ ui <- page_navbar(
     ),
     card(card_header("Emissões % PIB — Sazonalidade"),
          plotlyOutput("sa_seasonal_pct", height = "360px")),
-    card(card_header("Emissões % PIB — Sazonalidade (Semanal)"),
-         plotlyOutput("sa_weekly_seasonal_pct", height = "360px")),
     layout_columns(
       col_widths = c(6, 6),
       card(card_header("Caixa do Tesouro (Sazonal)"),
            plotlyOutput("sa_tsy_seas", height = "320px")),
       card(card_header("Caixa do Tesouro"),
            plotlyOutput("sa_tsy_ts",   height = "320px"))
+    ),
+    card(
+      card_header("Caixa do Tesouro % PIB (Sazonal)"),
+      plotlyOutput("sa_tsy_seas_pct", height = "320px")
     ),
     card(
       card_header("Emissões YTD"),
@@ -3693,14 +3669,16 @@ ui <- page_navbar(
     ),
     card(card_header("Emissões % PIB — Sazonalidade"),
          plotlyOutput("co_seasonal_pct", height = "360px")),
-    card(card_header("Emissões % PIB — Sazonalidade (Semanal)"),
-         plotlyOutput("co_weekly_seasonal_pct", height = "360px")),
     layout_columns(
       col_widths = c(6, 6),
       card(card_header("Caixa do Tesouro (Sazonal)"),
            plotlyOutput("co_tsy_seas", height = "320px")),
       card(card_header("Caixa do Tesouro"),
            plotlyOutput("co_tsy_ts",   height = "320px"))
+    ),
+    card(
+      card_header("Caixa do Tesouro % PIB (Sazonal)"),
+      plotlyOutput("co_tsy_seas_pct", height = "320px")
     ),
     card(
       card_header("Emissões YTD"),
@@ -3838,8 +3816,8 @@ server <- function(input, output, session) {
   output$cl_weekly       <- renderPlotly({ req(chile); n <- if (isTRUE(input$cl_weekly_all)) NULL else 26L; chart_weekly(chile$lic, "chile", "CLP tri", n_weeks = n) })
   output$cl_weekly_pct   <- renderPlotly({ req(chile); n <- if (isTRUE(input$cl_weekly_all)) NULL else 26L; chart_weekly_pct_gdp(chile$lic, chile$gdp, "chile", "CLP tri", n_weeks = n) })
   output$cl_seasonal_pct <- renderPlotly({ req(chile); chart_seasonal_pct_gdp(chile$lic, chile$gdp, "chile") })
-  output$cl_weekly_seasonal_pct <- renderPlotly({ req(chile); chart_weekly_seasonal_pct_gdp(chile$lic, chile$gdp, "chile") })
   output$cl_tsy_seas    <- renderPlotly({ req(chile); chart_tsy_seasonal(chile$tsy, "chile", "USD bi") })
+  output$cl_tsy_seas_pct <- renderPlotly({ req(chile); chart_tsy_seasonal_pct_gdp(chile$tsy, chile$gdp_usd, "chile", factor = 1/1000) })
   output$cl_tsy_ts      <- renderPlotly({ req(chile); chart_tsy_ts(chile$tsy, "USD bi") })
   output$cl_tsy_seas_pesos <- renderPlotly({ req(chile); chart_tsy_seasonal(chile$tsy, "chile", "USD bi", col = "Pesos") })
   output$cl_tsy_ts_pesos   <- renderPlotly({ req(chile); chart_tsy_ts(chile$tsy, "USD bi", col = "Pesos") })
@@ -3868,8 +3846,8 @@ server <- function(input, output, session) {
   output$mx_weekly       <- renderPlotly({ req(mexico); n <- if (isTRUE(input$mx_weekly_all)) NULL else 26L; chart_weekly(mexico$lic, "mexico", "MXN tri", n_weeks = n) })
   output$mx_weekly_pct   <- renderPlotly({ req(mexico); n <- if (isTRUE(input$mx_weekly_all)) NULL else 26L; chart_weekly_pct_gdp(mexico$lic, mexico$gdp, "mexico", "MXN tri", n_weeks = n) })
   output$mx_seasonal_pct <- renderPlotly({ req(mexico); chart_seasonal_pct_gdp(mexico$lic, mexico$gdp, "mexico") })
-  output$mx_weekly_seasonal_pct <- renderPlotly({ req(mexico); chart_weekly_seasonal_pct_gdp(mexico$lic, mexico$gdp, "mexico") })
   output$mx_tsy_seas    <- renderPlotly({ req(mexico); chart_tsy_seasonal(mexico$tsy, "mexico", "MXN bi") })
+  output$mx_tsy_seas_pct <- renderPlotly({ req(mexico); chart_tsy_seasonal_pct_gdp(mexico$tsy, mexico$gdp, "mexico", factor = 1/1000) })
   output$mx_tsy_ts      <- renderPlotly({ req(mexico); chart_tsy_ts(mexico$tsy, "MXN bi") })
   output$mx_yield           <- renderPlotly({ req(mexico); chart_mx_yield(mexico$lic) })
   output$mx_composition     <- renderPlotly({ req(mexico); chart_composition(mexico$lic, "mexico", "MXN tri", "instrument") })
@@ -3893,8 +3871,8 @@ server <- function(input, output, session) {
   output$sa_weekly       <- renderPlotly({ req(sa); n <- if (isTRUE(input$sa_weekly_all)) NULL else 26L; chart_weekly(sa$lic, "south_africa", "ZAR tri", n_weeks = n) })
   output$sa_weekly_pct   <- renderPlotly({ req(sa); n <- if (isTRUE(input$sa_weekly_all)) NULL else 26L; chart_weekly_pct_gdp(sa$lic, sa$gdp, "south_africa", "ZAR tri", n_weeks = n) })
   output$sa_seasonal_pct <- renderPlotly({ req(sa); chart_seasonal_pct_gdp(sa$lic, sa$gdp, "south_africa") })
-  output$sa_weekly_seasonal_pct <- renderPlotly({ req(sa); chart_weekly_seasonal_pct_gdp(sa$lic, sa$gdp, "south_africa") })
   output$sa_tsy_seas    <- renderPlotly({ req(sa); chart_tsy_seasonal(sa$tsy, "south_africa", "ZAR tri") })
+  output$sa_tsy_seas_pct <- renderPlotly({ req(sa); chart_tsy_seasonal_pct_gdp(sa$tsy, sa$gdp, "south_africa", factor = 1) })
   output$sa_tsy_ts      <- renderPlotly({ req(sa); chart_tsy_ts(sa$tsy, "ZAR tri") })
   output$sa_composition     <- renderPlotly({ req(sa); chart_composition(sa$lic, "south_africa", "ZAR tri", "instrument") })
   output$sa_composition_ccy <- renderPlotly({ req(sa); chart_composition(sa$lic, "south_africa", "ZAR tri", "currency") })
@@ -3918,8 +3896,8 @@ server <- function(input, output, session) {
   output$co_weekly       <- renderPlotly({ req(colombia); n <- if (isTRUE(input$co_weekly_all)) NULL else 26L; chart_weekly(colombia$lic, "colombia", "COP tri", n_weeks = n) })
   output$co_weekly_pct   <- renderPlotly({ req(colombia); n <- if (isTRUE(input$co_weekly_all)) NULL else 26L; chart_weekly_pct_gdp(colombia$lic, colombia$gdp, "colombia", "COP tri", n_weeks = n) })
   output$co_seasonal_pct <- renderPlotly({ req(colombia); chart_seasonal_pct_gdp(colombia$lic, colombia$gdp, "colombia") })
-  output$co_weekly_seasonal_pct <- renderPlotly({ req(colombia); chart_weekly_seasonal_pct_gdp(colombia$lic, colombia$gdp, "colombia") })
   output$co_tsy_seas     <- renderPlotly({ req(colombia); chart_tsy_seasonal(colombia$tsy, "colombia", "COP tri") })
+  output$co_tsy_seas_pct <- renderPlotly({ req(colombia); chart_tsy_seasonal_pct_gdp(colombia$tsy, colombia$gdp, "colombia", factor = 1) })
   output$co_tsy_ts       <- renderPlotly({ req(colombia); chart_tsy_ts(colombia$tsy, "COP tri") })
   output$co_vs_target    <- renderPlotly({ req(colombia); chart_vs_target(colombia$lic, TARGET_COLOMBIA, "colombia", "COP tri", "2026") |> layout(legend = list(orientation = "h", y = -0.45), margin = list(b = 120)) })
   output$co_composition     <- renderPlotly({ req(colombia); chart_composition(colombia$lic, "colombia", "COP tri", "instrument") })
