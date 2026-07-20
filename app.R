@@ -3421,26 +3421,14 @@ ui <- page_navbar(
       card_header("Perfil de Vencimento — Dívida em Dólares (USD)"),
       plotlyOutput("cl_maturity_usd", height = "360px")
     ),
-    layout_columns(
-      col_widths = c(6, 6),
-      card(
-        card_header("Amortizações de Bônus em 2026 (fechamento 2025)"),
-        div(
-          style = "padding: 20px; text-align: center;",
-          div(style = "font-size: 2rem; font-weight: 700; color: #1e3a5f;", "US$ 7.211 MM"),
-          div(style = "font-size: 0.8rem; color: #888; margin-top: 8px;",
-              "Fonte: Ministerio de Hacienda de Chile")
-        )
-      ),
-      card(
-        card_header("Prazo Médio da Dívida"),
-        div(
-          style = "padding: 20px; text-align: center;",
-          div(style = "font-size: 2rem; font-weight: 700; color: #1e3a5f;", "10.4 anos"),
-          div(style = "font-size: 0.9rem; color: #555; margin-top: 6px;", "Fechamento 2025"),
-          div(style = "font-size: 0.8rem; color: #888; margin-top: 8px;",
-              "Fonte: Ministerio de Hacienda de Chile")
-        )
+    card(
+      card_header("Prazo Médio da Dívida"),
+      div(
+        style = "padding: 20px; text-align: center;",
+        div(style = "font-size: 2rem; font-weight: 700; color: #1e3a5f;", "10.4 anos"),
+        div(style = "font-size: 0.9rem; color: #555; margin-top: 6px;", "Fechamento 2025"),
+        div(style = "font-size: 0.8rem; color: #888; margin-top: 8px;",
+            "Fonte: Ministerio de Hacienda de Chile")
       )
     )
   ),
