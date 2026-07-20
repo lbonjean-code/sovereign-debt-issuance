@@ -52,9 +52,12 @@ extract_closing_balance <- function(url) {
     parts <- parts[parts != "Closing balance"]
     nums  <- as.numeric(gsub(" ", "", parts))
     nums  <- nums[!is.na(nums) & nums > 1000]
-    
-    if (length(nums) == 0) return(NA)
-    return(nums[1])
+
+    # Column order in Table 4: current FY [Budget estimate | May | Year to date]
+    # then prior FY [Preliminary | May | YTD]. We want the month's actual value,
+    # which is the 2nd column (nums[2]) — NOT the Budget estimate (nums[1]).
+    if (length(nums) < 2) return(NA)
+    return(nums[2])
     
   }, error = function(e) {
     cat("Error fetching", url, ":", e$message, "\n")
