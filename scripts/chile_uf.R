@@ -38,11 +38,14 @@ if (file.exists(output_path)) {
   last_date <- max(existing$Fecha)
   cat("Existing data through", format(last_date), "\n")
   if (last_date >= Sys.Date() - 1) {
+    # Already current — skip the fetch. Do NOT quit(): this script is source()d
+    # by run_all.R, and quit() would terminate the entire pipeline session.
     cat("Already up to date.\n")
-    quit(save = "no")
+    result <- existing
+  } else {
+    new_data <- fetch_uf(last_date + 1, Sys.Date())
+    result <- bind_rows(existing, new_data) |> arrange(Fecha) |> distinct(Fecha, .keep_all = TRUE)
   }
-  new_data <- fetch_uf(last_date + 1, Sys.Date())
-  result <- bind_rows(existing, new_data) |> arrange(Fecha) |> distinct(Fecha, .keep_all = TRUE)
 } else {
   cat("First run: fetching from 2020-01-01\n")
   result <- fetch_uf(as.Date("2020-01-01"), Sys.Date())
