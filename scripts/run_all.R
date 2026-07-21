@@ -52,5 +52,8 @@ run_script(paste0(base, "colombia_debt.R"))
 run_script(paste0(base, "colombia_holdings.R"))
 run_script(paste0(base, "colombia_entidades_publicas.R"))
 
+# Freshness check — runs last, after all data is written. Reports the latest
+# data date in each CSV and flags series that have silently stopped updating.
+run_script(paste0(base, "data_freshness.R"))
 
 log("--- Run finished ---")
