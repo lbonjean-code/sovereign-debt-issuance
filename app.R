@@ -173,9 +173,12 @@ load_chile <- function() {
   maturity_clp <- read_csv(path("chile_maturity_clp.csv"), show_col_types = FALSE)
   maturity_usd <- read_csv(path("chile_maturity_usd.csv"), show_col_types = FALSE)
 
+  avg_maturity <- read_csv(path("chile_avg_maturity.csv"), show_col_types = FALSE)
+
   list(lic = lic, tsy = tsy, gdp = gdp, gdp_usd = gdp_usd, debt = debt,
        auction_det = auction_det, holdings = holdings,
-       maturity_clp = maturity_clp, maturity_usd = maturity_usd)
+       maturity_clp = maturity_clp, maturity_usd = maturity_usd,
+       avg_maturity = avg_maturity)
 }
 
 # ── Mexico ───────────────────────────────────────────────────
@@ -2080,7 +2083,9 @@ build_summary_table <- function(chile, mexico, sa, colombia) {
 
   get_avg_mat <- function(avg_mat, country) {
     if (is.null(avg_mat) || nrow(avg_mat) == 0) return(NA_real_)
-    if (country == "mexico") {
+    if (country == "chile") {
+      avg_mat |> arrange(Ano) |> tail(1) |> pull(Madurez_Anos)
+    } else if (country == "mexico") {
       cur_yr <- year(today)
       obs    <- avg_mat |> filter(year(Periodo) == cur_yr) |> slice_max(Periodo, n = 1)
       if (nrow(obs) == 0) obs <- avg_mat |> slice_max(Periodo, n = 1)
@@ -2155,7 +2160,7 @@ build_summary_table <- function(chile, mexico, sa, colombia) {
     list(group = "Prazo Médio Ponderado",  label = "Duração (anos)",
          fmt_fn = fmt_anos,
          vals = c(
-           get_avg_mat(NULL,                "chile"),
+           get_avg_mat(chile$avg_maturity,  "chile"),
            get_avg_mat(mexico$avg_maturity, "mexico"),
            get_avg_mat(sa$avg_maturity,     "south_africa"),
            get_avg_mat(colombia$avg_maturity, "colombia"))),
@@ -2943,6 +2948,36 @@ chart_sa_avg_maturity <- function(avg_maturity) {
     layout(margin = list(b = 80))
 }
 
+# ── Chile: weighted average maturity of gross central govt debt ─
+chart_cl_avg_maturity <- function(avg_maturity) {
+  if (is.null(avg_maturity) || nrow(avg_maturity) == 0) return(plotly_placeholder())
+
+  df <- avg_maturity |>
+    arrange(Ano) |>
+    mutate(Ano = factor(Ano, levels = Ano))
+
+  p <- ggplot(df, aes(x = Ano, y = Madurez_Anos,
+                      text = paste0(Ano, ": ", round(Madurez_Anos, 2), " anos"))) +
+    geom_col(fill = "#4472C4", width = 0.7) +
+    geom_text(aes(label = round(Madurez_Anos, 1)), vjust = -0.5, size = 2.8, color = "#333333") +
+    scale_y_continuous(
+      labels = label_number(suffix = " anos", accuracy = 0.1),
+      expand = expansion(mult = c(0, 0.15))
+    ) +
+    labs(
+      subtitle = "Madurez exata ao fechamento de dezembro (ponderada por montante vigente)",
+      caption  = "Fonte: reconstrução a partir dos Relatórios Trimestrais de Dívida do Governo Central (DIPRES)"
+    ) +
+    PLOT_THEME +
+    theme(
+      axis.text.x  = element_text(angle = 45, hjust = 1),
+      plot.caption = element_text(hjust = 0, size = 7, color = "#888888")
+    )
+
+  ggplotly(p, tooltip = "text") |>
+    layout(margin = list(b = 80))
+}
+
 # ── South Africa: bid-to-cover ratio over time ───────────────
 chart_sa_btc <- function(det) {
   if (is.null(det) || nrow(det) == 0) return(plotly_placeholder("Dados de BTC não disponíveis"))
@@ -3423,13 +3458,7 @@ ui <- page_navbar(
     ),
     card(
       card_header("Prazo Médio da Dívida"),
-      div(
-        style = "padding: 20px; text-align: center;",
-        div(style = "font-size: 2rem; font-weight: 700; color: #1e3a5f;", "10.4 anos"),
-        div(style = "font-size: 0.9rem; color: #555; margin-top: 6px;", "Fechamento 2025"),
-        div(style = "font-size: 0.8rem; color: #888; margin-top: 8px;",
-            "Fonte: Ministerio de Hacienda de Chile")
-      )
+      plotlyOutput("cl_avg_maturity", height = "340px")
     )
   ),
 
@@ -3821,6 +3850,7 @@ server <- function(input, output, session) {
   output$cl_maturity_usd    <- renderPlotly({ req(chile); chart_cl_maturity_usd(chile$maturity_usd) })
   output$cl_debt_pct        <- renderPlotly({ req(chile); chart_debt_pct_gdp(chile$debt, chile$gdp_usd, "chile") })
   output$cl_debt_comp       <- renderPlotly({ req(chile); chart_debt_composition(chile$debt, "chile") })
+  output$cl_avg_maturity    <- renderPlotly({ req(chile); chart_cl_avg_maturity(chile$avg_maturity) })
 
   # ── Mexico ─────────────────────────────────────────────────
   output$mx_ytd         <- renderPlotly({ req(mexico); chart_ytd(mexico$lic, "mexico", "MXN tri") })
